@@ -14,19 +14,20 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QStackedWidget, QScrollArea,
     QDialog, QLineEdit, QTextEdit, QComboBox, QDateEdit, QTimeEdit,
-    QFrame, QSizePolicy, QMessageBox, QSpacerItem
+    QFrame, QSizePolicy, QMessageBox, QSpacerItem, QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import (
     Qt, QDate, QTime, QDateTime, QTimer, QPoint, QRect, QSize, pyqtSignal
 )
 from PyQt5.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, QPalette, QFontMetrics,
-    QLinearGradient, QPainterPath
+    QLinearGradient, QPainterPath, QPixmap, QIcon
 )
 
 # ─────────────────────────────────────────────
 # ЦВЕТА
 # ─────────────────────────────────────────────
+
 
 class Colors:
     BG            = "#FFFFFF"
@@ -42,11 +43,335 @@ class Colors:
     GREEN         = "#34C759"
     HOVER         = "#E5E5EA"
 
-    CATEGORY = {
-        "work":      "#007AFF",
-        "personal":  "#34C759",
-        "important": "#FF3B30",
-    }
+
+# ─────────────────────────────────────────────
+# CATEGORY
+# ─────────────────────────────────────────────
+
+
+class Category:
+    def __init__(self, name: str, color: str, id: Optional[int] = None):
+        self.id = id
+        self.name = name
+        self.color = color
+    
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "color": self.color}
+
+class CategoryManager:
+    """Управление пользовательскими категориями"""
+    
+    # Предустановленные цвета (10 цветов)
+    PREDEFINED_COLORS = [
+        ("#007AFF", "Синий"),
+        ("#34C759", "Зеленый"),
+        ("#FF3B30", "Красный"),
+        ("#FF9500", "Оранжевый"),
+        ("#FF2D55", "Розовый"),
+        ("#AF52DE", "Фиолетовый"),
+        ("#FFCC00", "Желтый"),
+        ("#5E5CE6", "Индиго"),
+        ("#64D2FF", "Голубой"),
+        ("#FF6B6B", "Коралловый")
+    ]
+    
+    def __init__(self, db_conn):
+        self.conn = db_conn
+        self._create_table()
+        self._ensure_default_categories()
+    
+    def _create_table(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                color       TEXT NOT NULL
+            )
+        """)
+        self.conn.commit()
+    
+    def _ensure_default_categories(self):
+        """Добавляет стандартные категории, если их нет"""
+        default_cats = [
+            ("Работа", "#007AFF"),
+            ("Личное", "#34C759"),
+            ("Важное", "#FF3B30")
+        ]
+        
+        for name, color in default_cats:
+            cur = self.conn.execute("SELECT id FROM categories WHERE name = ?", (name,))
+            if not cur.fetchone():
+                self.add_category(name, color)
+    
+    def add_category(self, name: str, color: str) -> Optional[Category]:
+        """Добавляет новую категорию"""
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO categories (name, color) VALUES (?, ?)",
+                (name, color)
+            )
+            self.conn.commit()
+            return Category(name, color, cur.lastrowid)
+        except sqlite3.IntegrityError:
+            return None
+    
+    def update_category(self, cat_id: int, name: str, color: str) -> bool:
+        """Обновляет категорию"""
+        try:
+            self.conn.execute(
+                "UPDATE categories SET name = ?, color = ? WHERE id = ?",
+                (name, color, cat_id)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+    
+    def delete_category(self, cat_id: int):
+        """Удаляет категорию (события переназначаются в 'Личное')"""
+        # Находим ID категории "Личное"
+        personal = self.conn.execute(
+            "SELECT id FROM categories WHERE name = 'Личное'"
+        ).fetchone()
+        
+        if personal:
+            # Переназначаем события
+            self.conn.execute(
+                "UPDATE events SET category = ? WHERE category = ?",
+                (personal[0], cat_id)
+            )
+        
+        # Удаляем категорию
+        self.conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+        self.conn.commit()
+    
+    def get_all_categories(self) -> List[Category]:
+        """Возвращает все категории"""
+        cur = self.conn.execute("SELECT id, name, color FROM categories ORDER BY name")
+        return [Category(name, color, id) for id, name, color in cur.fetchall()]
+    
+    def get_category_by_id(self, cat_id: int) -> Optional[Category]:
+        cur = self.conn.execute(
+            "SELECT id, name, color FROM categories WHERE id = ?",
+            (cat_id,)
+        )
+        row = cur.fetchone()
+        if row:
+            return Category(row[1], row[2], row[0])
+        return None
+    
+    def get_category_by_name(self, name: str) -> Optional[Category]:
+        cur = self.conn.execute(
+            "SELECT id, name, color FROM categories WHERE name = ?",
+            (name,)
+        )
+        row = cur.fetchone()
+        if row:
+            return Category(row[1], row[2], row[0])
+        return None
+    
+class CategoryDialog(QDialog):
+    """Диалог для управления категориями"""
+    
+    def __init__(self, parent, category_manager: CategoryManager):
+        super().__init__(parent)
+        self.category_manager = category_manager
+        self.setWindowTitle("Управление категориями")
+        self.setMinimumSize(500, 400)
+        self.setModal(True)
+        self._build_ui()
+        self._load_categories()
+    
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Заголовок
+        title = QLabel("Управление категориями")
+        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Colors.PRIMARY_TEXT};")
+        layout.addWidget(title)
+        
+        # Список категорий
+        self.category_list = QListWidget()
+        self.category_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {Colors.SECONDARY_BG};
+                border: 1px solid {Colors.SEPARATOR};
+                border-radius: 8px;
+                padding: 5px;
+            }}
+            QListWidget::item {{
+                padding: 8px;
+                border-radius: 6px;
+            }}
+            QListWidget::item:selected {{
+                background: {Colors.ACCENT_LIGHT};
+            }}
+        """)
+        self.category_list.itemClicked.connect(self._on_category_selected)
+        layout.addWidget(self.category_list)
+        
+        # Форма редактирования
+        form_widget = QWidget()
+        form_layout = QGridLayout(form_widget)
+        form_layout.setSpacing(10)
+        
+        form_layout.addWidget(QLabel("Название:"), 0, 0)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Введите название категории")
+        form_layout.addWidget(self.name_edit, 0, 1)
+        
+        form_layout.addWidget(QLabel("Цвет:"), 1, 0)
+        self.color_combo = QComboBox()
+        for color_code, color_name in CategoryManager.PREDEFINED_COLORS:
+            # Создаем иконку с цветом
+            pixmap = QPixmap(20, 20)
+            pixmap.fill(QColor(color_code))
+            icon = QIcon(pixmap)
+            self.color_combo.addItem(icon, color_name, color_code)
+        form_layout.addWidget(self.color_combo, 1, 1)
+        
+        layout.addWidget(form_widget)
+        
+        # Кнопки управления
+        btn_layout = QHBoxLayout()
+        
+        self.add_btn = QPushButton("➕ Добавить")
+        self.add_btn.clicked.connect(self._add_category)
+        btn_layout.addWidget(self.add_btn)
+        
+        self.update_btn = QPushButton("✏️ Изменить")
+        self.update_btn.clicked.connect(self._update_category)
+        self.update_btn.setEnabled(False)
+        btn_layout.addWidget(self.update_btn)
+        
+        self.delete_btn = QPushButton("🗑️ Удалить")
+        self.delete_btn.clicked.connect(self._delete_category)
+        self.delete_btn.setEnabled(False)
+        btn_layout.addWidget(self.delete_btn)
+        
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Закрыть")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        self._apply_styles()
+    
+    def _apply_styles(self):
+        style = f"""
+            QPushButton {{
+                background: {Colors.SECONDARY_BG};
+                color: {Colors.PRIMARY_TEXT};
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {Colors.SEPARATOR};
+            }}
+            QLineEdit, QComboBox {{
+                background: {Colors.SECONDARY_BG};
+                border: 1px solid {Colors.SEPARATOR};
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border-color: {Colors.ACCENT};
+            }}
+        """
+        self.setStyleSheet(style)
+    
+    def _load_categories(self):
+        self.category_list.clear()
+        categories = self.category_manager.get_all_categories()
+        for cat in categories:
+            item = QListWidgetItem(f"{cat.name}")
+            item.setData(Qt.UserRole, cat.id)
+            # Цветной индикатор
+            item.setForeground(QColor(cat.color))
+            self.category_list.addItem(item)
+    
+    def _on_category_selected(self, item):
+        self.update_btn.setEnabled(True)
+        self.delete_btn.setEnabled(True)
+        
+        cat_id = item.data(Qt.UserRole)
+        category = self.category_manager.get_category_by_id(cat_id)
+        if category:
+            self.name_edit.setText(category.name)
+            # Устанавливаем цвет в комбобоксе
+            for i in range(self.color_combo.count()):
+                if self.color_combo.itemData(i) == category.color:
+                    self.color_combo.setCurrentIndex(i)
+                    break
+    
+    def _add_category(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Ошибка", "Введите название категории")
+            return
+        
+        color = self.color_combo.currentData()
+        
+        if self.category_manager.add_category(name, color):
+            self._load_categories()
+            self.name_edit.clear()
+            QMessageBox.information(self, "Успех", f"Категория '{name}' добавлена")
+        else:
+            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
+    
+    def _update_category(self):
+        current_item = self.category_list.currentItem()
+        if not current_item:
+            return
+        
+        cat_id = current_item.data(Qt.UserRole)
+        new_name = self.name_edit.text().strip()
+        
+        if not new_name:
+            QMessageBox.warning(self, "Ошибка", "Введите название категории")
+            return
+        
+        new_color = self.color_combo.currentData()
+        
+        if self.category_manager.update_category(cat_id, new_name, new_color):
+            self._load_categories()
+            QMessageBox.information(self, "Успех", f"Категория обновлена")
+        else:
+            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
+    
+    def _delete_category(self):
+        current_item = self.category_list.currentItem()
+        if not current_item:
+            return
+        
+        cat_id = current_item.data(Qt.UserRole)
+        category = self.category_manager.get_category_by_id(cat_id)
+        
+        # Запрещаем удаление стандартных категорий
+        if category.name in ["Работа", "Личное", "Важное"]:
+            QMessageBox.warning(self, "Ошибка", "Нельзя удалить стандартную категорию")
+            return
+        
+        reply = QMessageBox.question(
+            self, "Подтверждение",
+            f'Удалить категорию "{category.name}"?\nСобытия будут переназначены в "Личное"',
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.category_manager.delete_category(cat_id)
+            self._load_categories()
+            self.name_edit.clear()
+            self.update_btn.setEnabled(False)
+            self.delete_btn.setEnabled(False)
+            QMessageBox.information(self, "Успех", "Категория удалена")
 
 # ─────────────────────────────────────────────
 # EVENT DATACLASS
@@ -57,13 +382,26 @@ class Event:
     title: str
     start_dt: datetime
     end_dt: datetime
-    category: str = "personal"
+    category: str = "Личное"
     description: str = ""
     id: Optional[int] = None
+    category_id: Optional[int] = None
+    _db: Optional[object] = None  # Добавьте это поле
 
     @property
     def color(self) -> str:
-        return Colors.CATEGORY.get(self.category, Colors.ACCENT)
+        # Если есть доступ к БД через _db, получаем цвет оттуда
+        if self._db and hasattr(self._db, 'category_manager'):
+            category_obj = self._db.category_manager.get_category_by_name(self.category)
+            if category_obj:
+                return category_obj.color
+        # Заглушка на случай отсутствия БД
+        colors_map = {
+            "Работа": "#007AFF",
+            "Личное": "#34C759",
+            "Важное": "#FF3B30"
+        }
+        return colors_map.get(self.category, Colors.ACCENT)
 
 # ─────────────────────────────────────────────
 # DATABASE MANAGER
@@ -74,6 +412,7 @@ class DatabaseManager:
         db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar.db")
         self.conn = sqlite3.connect(db_path)
         self._create_table()
+        self.category_manager = CategoryManager(self.conn)  # Добавьте эту строку
 
     def _create_table(self):
         self.conn.execute("""
@@ -83,38 +422,54 @@ class DatabaseManager:
                 description TEXT DEFAULT '',
                 start_dt    TEXT NOT NULL,
                 end_dt      TEXT NOT NULL,
-                category    TEXT DEFAULT 'personal'
+                category    INTEGER DEFAULT 1
             )
         """)
         self.conn.commit()
 
     def _row_to_event(self, row) -> Event:
-        return Event(
+        category_id = row[5]
+        category = self.category_manager.get_category_by_id(category_id)
+        category_name = category.name if category else "Личное"
+        
+        event = Event(
             id=row[0],
             title=row[1],
             description=row[2],
             start_dt=datetime.fromisoformat(row[3]),
             end_dt=datetime.fromisoformat(row[4]),
-            category=row[5],
+            category=category_name,
+            category_id=category_id
         )
+        event._db = self  # Добавьте эту строку - передаем ссылку на БД
+        return event
 
     def add_event(self, event: Event) -> Event:
+        category_obj = self.category_manager.get_category_by_name(event.category)
+        category_id = category_obj.id if category_obj else 1
+        
         cur = self.conn.execute(
             "INSERT INTO events (title, description, start_dt, end_dt, category) VALUES (?,?,?,?,?)",
             (event.title, event.description,
-             event.start_dt.isoformat(), event.end_dt.isoformat(), event.category)
+             event.start_dt.isoformat(), event.end_dt.isoformat(), category_id)
         )
         self.conn.commit()
         event.id = cur.lastrowid
+        event.category_id = category_id
+        event._db = self  # Добавьте эту строку
         return event
 
     def update_event(self, event: Event):
+        category_obj = self.category_manager.get_category_by_name(event.category)
+        category_id = category_obj.id if category_obj else 1
+        
         self.conn.execute(
             "UPDATE events SET title=?, description=?, start_dt=?, end_dt=?, category=? WHERE id=?",
             (event.title, event.description,
-             event.start_dt.isoformat(), event.end_dt.isoformat(), event.category, event.id)
+             event.start_dt.isoformat(), event.end_dt.isoformat(), category_id, event.id)
         )
         self.conn.commit()
+        event._db = self  # Добавьте эту строку
 
     def delete_event(self, event_id: int):
         self.conn.execute("DELETE FROM events WHERE id=?", (event_id,))
@@ -177,9 +532,10 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 # ─────────────────────────────────────────────
 
 class EventDialog(QDialog):
-    def __init__(self, parent=None, event: Optional[Event] = None,
+    def __init__(self, parent=None, db=None, event: Optional[Event] = None,
                  preset_date: Optional[date] = None, preset_time: Optional[QTime] = None):
         super().__init__(parent)
+        self.db = db  # Сохраняем ссылку на БД
         self.event = event
         self.setWindowTitle("Изменить событие" if event else "Новое событие")
         self.setMinimumWidth(420)
@@ -300,11 +656,8 @@ class EventDialog(QDialog):
         # Category
         layout.addWidget(QLabel("КАТЕГОРИЯ"))
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["work", "personal", "important"])
-        cat_labels = {"work": "💼 Работа", "personal": "🏠 Личное", "important": "⭐ Важное"}
-        for i, key in enumerate(["work", "personal", "important"]):
-            self.category_combo.setItemText(i, cat_labels[key])
-            self.category_combo.setItemData(i, key)
+        self._load_categories()
+        self.category_combo.currentTextChanged.connect(self._on_category_changed)  # Добавьте эту строку
         layout.addWidget(self.category_combo)
 
         # Description
@@ -338,10 +691,33 @@ class EventDialog(QDialog):
         self.start_time.setTime(QTime(event.start_dt.hour, event.start_dt.minute))
         self.end_time.setTime(QTime(event.end_dt.hour, event.end_dt.minute))
         self.desc_edit.setPlainText(event.description)
+        
+        # Находим категорию в комбобоксе по имени
         for i in range(self.category_combo.count()):
-            if self.category_combo.itemData(i) == event.category:
+            if self.category_combo.itemText(i) == event.category:
                 self.category_combo.setCurrentIndex(i)
                 break
+        
+        # Обновляем цветовые индикаторы в UI
+        self._update_category_color(event.category)
+
+    def _update_category_color(self, category_name: str):
+        """Обновляет цветовые индикаторы для выбранной категории"""
+        if self.db and hasattr(self.db, 'category_manager'):
+            category = self.db.category_manager.get_category_by_name(category_name)
+            if category:
+                # Меняем цвет рамки или фона для визуального отображения
+                color = QColor(category.color)
+                self.category_combo.setStyleSheet(f"""
+                    QComboBox {{
+                        background: {Colors.SECONDARY_BG};
+                        border: 1.5px solid {color.name()};
+                        border-radius: 8px;
+                        padding: 6px 10px;
+                    }}
+                """)
+            else:
+                self.category_combo.setStyleSheet("")
 
     def _save(self):
         title = self.title_edit.text().strip()
@@ -354,14 +730,16 @@ class EventDialog(QDialog):
         if et <= st:
             QMessageBox.warning(self, "Ошибка", "Время конца должно быть позже начала")
             return
+        
         self.result_event = Event(
             id=self.event.id if self.event else None,
             title=title,
             description=self.desc_edit.toPlainText(),
             start_dt=datetime(d.year(), d.month(), d.day(), st.hour(), st.minute()),
             end_dt=datetime(d.year(), d.month(), d.day(), et.hour(), et.minute()),
-            category=self.category_combo.currentData(),
+            category=self.category_combo.currentText(),
         )
+        self.result_event._db = self.db  # Добавьте эту строку
         self.accept()
 
     def _delete(self):
@@ -369,6 +747,34 @@ class EventDialog(QDialog):
                                 QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.result_event = None
             self.done(2)  # код 2 = удаление
+
+    def _load_categories(self):
+        """Загружает категории из базы данных"""
+        self.category_combo.clear()
+        
+        # ИСПРАВЬТЕ ЭТУ СТРОКУ:
+        categories = []
+        if self.db and hasattr(self.db, 'category_manager'):
+            categories = self.db.category_manager.get_all_categories()
+        
+        # Если нет доступа к db, используем стандартные
+        if not categories:
+            categories = [
+                Category("Работа", "#007AFF"),
+                Category("Личное", "#34C759"),
+                Category("Важное", "#FF3B30")
+            ]
+        
+        for cat in categories:
+            # Создаем иконку с цветом
+            pixmap = QPixmap(16, 16)
+            pixmap.fill(QColor(cat.color))
+            icon = QIcon(pixmap)
+            self.category_combo.addItem(icon, cat.name, cat.name)
+
+    def _on_category_changed(self, category_name: str):
+        """Когда меняется категория, обновляем цвет"""
+        self._update_category_color(category_name)
 
 # ─────────────────────────────────────────────
 # MONTH VIEW
@@ -426,7 +832,8 @@ class MonthView(QWidget):
             self.cells.append(row_cells)
 
     def _on_cell_double_clicked(self, d: date):
-        dlg = EventDialog(self, preset_date=d)
+        # ИСПРАВЬТЕ - добавьте db=self.db
+        dlg = EventDialog(self, db=self.db, preset_date=d)
         if dlg.exec_() == QDialog.Accepted:
             self.db.add_event(dlg.result_event)
             self.refresh()
@@ -581,13 +988,19 @@ class DayCell(QWidget):
             path.addRoundedRect(6, tag_y, w - 12, tag_h, 4, 4)
             p.drawPath(path)
 
-            # Event title
+            # Event title с обрезкой текста
             p.setPen(QColor("white"))
             f2 = QFont("Helvetica Neue", 10)
             p.setFont(f2)
             time_str = ev.start_dt.strftime("%H:%M")
-            text = f"{time_str} {ev.title}"
-            p.drawText(10, tag_y, w - 16, tag_h, Qt.AlignVCenter | Qt.AlignLeft, text)
+            full_text = f"{time_str} {ev.title}"
+            
+            # Обрезаем текст с многоточием
+            font_metrics = QFontMetrics(f2)
+            available_width = w - 20  # Отступы слева и справа
+            elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
+            
+            p.drawText(10, tag_y, w - 16, tag_h, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
             tag_y += tag_h + 2
 
         # "+N more"
@@ -599,6 +1012,11 @@ class DayCell(QWidget):
             p.drawText(6, tag_y, w - 12, 16, Qt.AlignVCenter | Qt.AlignLeft, f"+{remaining} ещё")
 
         p.end()
+
+    def resizeEvent(self, event):
+        """При изменении размера ячейки перерисовываем"""
+        self.update()
+        super().resizeEvent(event)
 
 # ─────────────────────────────────────────────
 # DAY VIEW
@@ -641,14 +1059,15 @@ class DayView(QWidget):
         ))
 
     def _on_double_click(self, t: QTime):
-        dlg = EventDialog(self, preset_date=self.current_date, preset_time=t)
+        # ИСПРАВЬТЕ - добавьте db=self.db
+        dlg = EventDialog(self, db=self.db, preset_date=self.current_date, preset_time=t)
         if dlg.exec_() == QDialog.Accepted:
             self.db.add_event(dlg.result_event)
             self.refresh()
             self.event_changed.emit()
 
     def _on_event_click(self, event: Event):
-        dlg = EventDialog(self, event=event)
+        dlg = EventDialog(self, db=self.db, event=event)
         result = dlg.exec_()
         if result == QDialog.Accepted:
             self.db.update_event(dlg.result_event)
@@ -802,23 +1221,30 @@ class DayCanvas(QWidget):
                 time_str = f"{ev.start_dt.strftime('%H:%M')}"
                 text_rect = rect.adjusted(10, 4, -4, -4)
                 
+                # Вместо текущего кода с p.drawText, используйте:
                 if rect.height() > 32:
                     if group_size > 2:
-                        # Если много событий, показываем только время
-                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
-                                f"{ev.title[:15]}\n{time_str}")
+                        # Для маленьких блоков
+                        full_text = f"{ev.title[:15]}\n{time_str}"
+                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, full_text)
                     else:
-                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
-                                f"{ev.title}\n{time_str}")
+                        # Полный текст с обрезкой
+                        font_metrics = QFontMetrics(title_font)
+                        available_width = rect.width() - 14
+                        elided_title = font_metrics.elidedText(ev.title, Qt.ElideRight, available_width)
+                        full_text = f"{elided_title}\n{time_str}"
+                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, full_text)
                 else:
                     if group_size > 2:
-                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft,
-                                f"{ev.title[:10]} {time_str}")
+                        full_text = f"{ev.title[:8]} {time_str}"
+                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, full_text)
                     else:
-                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft,
-                                f"{ev.title} {time_str}")
-
-                self._event_rects.append((rect, ev))
+                        # Обрезаем длинное название
+                        font_metrics = QFontMetrics(title_font)
+                        available_width = rect.width() - 14
+                        full_text = f"{ev.title} {time_str}"
+                        elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
+                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
 
         # Current time line
         if self.current_date == date.today():
@@ -831,6 +1257,11 @@ class DayCanvas(QWidget):
             p.drawEllipse(self.TIME_W - 8, now_y - 4, 8, 8)
 
         p.end()
+
+    def resizeEvent(self, event):
+        """При изменении размера окна перерисовываем"""
+        self.update()
+        super().resizeEvent(event)
 
     def _group_overlapping_events(self, events):
         """Группирует события, которые пересекаются по времени"""
@@ -908,7 +1339,7 @@ class WeekView(QWidget):
         ))
 
     def _on_event_click(self, ev: 'Event'):
-        dlg = EventDialog(self, event=ev)
+        dlg = EventDialog(self, db=self.db, event=ev)
         result = dlg.exec_()
         if result == QDialog.Accepted:
             self.db.update_event(dlg.result_event)
@@ -920,7 +1351,7 @@ class WeekView(QWidget):
             self.event_changed.emit()
 
     def _on_slot_dblclick(self, d: date, t: QTime):
-        dlg = EventDialog(self, preset_date=d, preset_time=t)
+        dlg = EventDialog(self, db=self.db, preset_date=d, preset_time=t)
         if dlg.exec_() == QDialog.Accepted:
             self.db.add_event(dlg.result_event)
             self.refresh()
@@ -1139,27 +1570,34 @@ class WeekCanvas(QWidget):
                     p.setPen(Qt.NoPen)
                     p.drawRoundedRect(rect.x(), rect.y(), 4, rect.height(), 2, 2)
 
+                    # Вместо текущего кода:
                     p.setPen(color.darker(140))
                     f2 = QFont("Helvetica Neue", 9 if group_size > 2 else 10, QFont.DemiBold)
                     p.setFont(f2)
                     tr = rect.adjusted(8, 3, -3, -3)
                     time_s = f"{ev.start_dt.strftime('%H:%M')}"
-                    
+
+                    font_metrics = QFontMetrics(f2)
+
                     if rect.height() > 28:
                         if group_size > 2:
+                            short_title = ev.title[:10] + "..." if len(ev.title) > 10 else ev.title
                             p.drawText(tr, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
-                                    f"{ev.title[:12]}\n{time_s}")
+                                    f"{short_title}\n{time_s}")
                         else:
+                            available_width = rect.width() - 11
+                            elided_title = font_metrics.elidedText(ev.title, Qt.ElideRight, available_width)
                             p.drawText(tr, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
-                                    f"{ev.title}\n{time_s}")
+                                    f"{elided_title}\n{time_s}")
                     else:
                         if group_size > 2:
-                            p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, 
-                                    f"{ev.title[:8]} {time_s}")
+                            short_title = ev.title[:6] + "..." if len(ev.title) > 6 else ev.title
+                            p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, f"{short_title} {time_s}")
                         else:
-                            p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, ev.title)
-                            
-                    self._event_rects.append((rect, ev))
+                            available_width = rect.width() - 11
+                            full_text = f"{ev.title} {time_s}"
+                            elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
+                            p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
 
         # Current-time line
         if today in self.days:
@@ -1175,6 +1613,11 @@ class WeekCanvas(QWidget):
             p.drawEllipse(lx - 4, ny - 4, 8, 8)
 
         p.end()
+
+    def resizeEvent(self, event):
+        """При изменении размера окна перерисовываем"""
+        self.update()
+        super().resizeEvent(event)
 
     def _group_overlapping_events(self, events):
         """Группирует события, которые пересекаются по времени"""
@@ -1482,6 +1925,13 @@ class ListView(QWidget):
             self._vbox.insertWidget(idx, spacer)
             idx += 1
 
+    def resizeEvent(self, event):
+        """При изменении размера окна обновляем обрезку текста в строках"""
+        super().resizeEvent(event)
+        # Обновляем все строки событий
+        for child in self._content.findChildren(EventRowWidget):
+            child._update_elided_texts()
+
     def _make_date_header(self, label: str, is_past: bool) -> QWidget:
         w = QWidget()
         w.setFixedHeight(36)
@@ -1499,11 +1949,11 @@ class ListView(QWidget):
     def _make_event_row(self, ev: 'Event', is_past: bool) -> QWidget:
         w = EventRowWidget(ev, is_past)
         w.edit_requested.connect(self._on_edit)
-        w.delete_requested.connect(self._on_delete)
+        w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         return w
 
     def _on_edit(self, ev: 'Event'):
-        dlg = EventDialog(self, event=ev)
+        dlg = EventDialog(self, db=self.db, event=ev)
         result = dlg.exec_()
         if result == QDialog.Accepted:
             self.db.update_event(dlg.result_event)
@@ -1529,15 +1979,20 @@ class ListView(QWidget):
 class EventRowWidget(QWidget):
     """Одна строка события в List View"""
     edit_requested   = pyqtSignal(object)
-    delete_requested = pyqtSignal(object)
 
     def __init__(self, ev: 'Event', is_past: bool):
         super().__init__()
         self.ev = ev
-        self._hovered = False
-        self.setFixedHeight(56)
+        self.setFixedHeight(56)  # Фиксированная высота
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self._build(is_past)
+        self.setAttribute(Qt.WA_StyledBackground, True)  # Включаем поддержку стилей фона
+    
+    def resizeEvent(self, event):
+        """При изменении ширины окна пересчитываем обрезку текста"""
+        super().resizeEvent(event)
+        self._update_elided_texts()
 
     def _build(self, is_past: bool):
         lay = QHBoxLayout(self)
@@ -1555,60 +2010,75 @@ class EventRowWidget(QWidget):
 
         # Time
         time_str = f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}"
-        time_lbl = QLabel(time_str)
-        time_lbl.setFixedWidth(110)
+        self.time_lbl = QLabel(time_str)
+        self.time_lbl.setFixedWidth(110)
         alpha = Colors.SECONDARY_TEXT if is_past else Colors.SECONDARY_TEXT
-        time_lbl.setStyleSheet(f"color: {alpha}; font-size: 12px; background: transparent;")
-        lay.addWidget(time_lbl)
+        self.time_lbl.setStyleSheet(f"color: {alpha}; font-size: 12px; background: transparent;")
+        lay.addWidget(self.time_lbl)
 
-        # Title + description
+        # Title и Description в одном вертикальном контейнере
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        title_lbl = QLabel(self.ev.title)
+        
+        # Название события - одна строка с многоточием
+        self.title_lbl = QLabel()
         tc = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
-        title_lbl.setStyleSheet(
+        self.title_lbl.setStyleSheet(
             f"color: {tc}; font-size: 13px; font-weight: 600; background: transparent;"
             + ("text-decoration: line-through;" if is_past else "")
         )
-        text_col.addWidget(title_lbl)
+        self.title_lbl.setWordWrap(False)
+        self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        text_col.addWidget(self.title_lbl)
+        
+        # Описание события - одна строка с многоточием (если есть)
+        self.desc_lbl = QLabel()
+        self.desc_lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 11px; background: transparent;")
+        self.desc_lbl.setWordWrap(False)
+        self.desc_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        
         if self.ev.description:
-            desc = QLabel(self.ev.description[:60] + ("…" if len(self.ev.description) > 60 else ""))
-            desc.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 11px; background: transparent;")
-            text_col.addWidget(desc)
+            text_col.addWidget(self.desc_lbl)
+        else:
+            self.desc_lbl.hide()
+        
         lay.addLayout(text_col, 1)
 
         # Category badge
-        cat_map = {"work": "💼", "personal": "🏠", "important": "⭐"}
-        badge = QLabel(cat_map.get(self.ev.category, ""))
+        cat_map = {"Работа": "💼", "Личное": "🏠", "Важное": "⭐"}
+        badge = QLabel(cat_map.get(self.ev.category, "📌"))
+        badge.setFixedWidth(30)
         badge.setStyleSheet("font-size: 14px; background: transparent;")
         lay.addWidget(badge)
 
-        # Edit button (hidden until hover)
-        self.edit_btn = QPushButton("✎")
-        self.edit_btn.setFixedSize(28, 28)
-        self.edit_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {Colors.SECONDARY_BG};
-                border: none; border-radius: 6px;
-                font-size: 14px; color: {Colors.SECONDARY_TEXT};
-            }}
-            QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
-        """)
-        self.edit_btn.setVisible(False)
-        self.edit_btn.clicked.connect(lambda: self.edit_requested.emit(self.ev))
-        lay.addWidget(self.edit_btn)
+        # Инициализируем тексты
+        self._update_elided_texts()
+
+    def _update_elided_texts(self):
+        """Обновляет тексты с обрезкой по ширине"""
+        available_width = self.width() - 180  # вычитаем: время (110) + бейдж (30) + отступы (40)
+        
+        if available_width > 0:
+            font_metrics = QFontMetrics(self.title_lbl.font())
+            self.title_lbl.setText(font_metrics.elidedText(self.ev.title, Qt.ElideRight, available_width))
+            
+            if self.ev.description and self.desc_lbl.isVisible():
+                desc_font_metrics = QFontMetrics(self.desc_lbl.font())
+                self.desc_lbl.setText(desc_font_metrics.elidedText(self.ev.description, Qt.ElideRight, available_width))
 
     def enterEvent(self, e):
-        self._hovered = True
-        self.edit_btn.setVisible(True)
+        """При наведении мыши - подсветка"""
+        super().enterEvent(e)
         self.setStyleSheet(f"background: {Colors.ACCENT_LIGHT}; border-radius: 8px;")
 
     def leaveEvent(self, e):
-        self._hovered = False
-        self.edit_btn.setVisible(False)
+        """При уходе мыши - убираем подсветку"""
+        super().leaveEvent(e)
         self.setStyleSheet("background: transparent;")
 
     def mouseDoubleClickEvent(self, e):
+        """Двойной клик - открываем событие для редактирования"""
+        super().mouseDoubleClickEvent(e)
         self.edit_requested.emit(self.ev)
 
 # ─────────────────────────────────────────────
@@ -1683,6 +2153,7 @@ class NavBar(QWidget):
     prev_clicked  = pyqtSignal()
     next_clicked  = pyqtSignal()
     add_clicked   = pyqtSignal()
+    manage_categories = pyqtSignal()  # Добавьте этот сигнал
 
     def __init__(self):
         super().__init__()
@@ -1718,6 +2189,25 @@ class NavBar(QWidget):
         layout.addWidget(self.title_lbl)
 
         layout.addStretch()
+
+        # Кнопка управления категориями (новая)
+        self.cat_btn = QPushButton("📁 Категории")
+        self.cat_btn.setCursor(Qt.PointingHandCursor)
+        self.cat_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {Colors.SECONDARY_BG};
+                color: {Colors.PRIMARY_TEXT};
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {Colors.SEPARATOR};
+            }}
+        """)
+        self.cat_btn.clicked.connect(self.manage_categories)
+        layout.addWidget(self.cat_btn)
 
         # Add event button
         self.add_btn = QPushButton("+ Событие")
@@ -1798,6 +2288,7 @@ class MainWindow(QMainWindow):
         self.navbar.prev_clicked.connect(self._go_prev)
         self.navbar.next_clicked.connect(self._go_next)
         self.navbar.add_clicked.connect(self._add_event)
+        self.navbar.manage_categories.connect(self._manage_categories)
         root.addWidget(self.navbar)
 
         # Stacked views
@@ -1863,7 +2354,8 @@ class MainWindow(QMainWindow):
         preset_date = getattr(v, 'current_date', date.today())
         if isinstance(preset_date, datetime):
             preset_date = preset_date.date()
-        dlg = EventDialog(self, preset_date=preset_date)
+        # ИСПРАВЬТЕ - добавьте db=self.db
+        dlg = EventDialog(self, db=self.db, preset_date=preset_date)
         if dlg.exec_() == QDialog.Accepted:
             self.db.add_event(dlg.result_event)
             self._on_event_changed()
@@ -1879,18 +2371,28 @@ class MainWindow(QMainWindow):
         today = date.today()
         seed = [
             Event("Планёрка команды", datetime(today.year, today.month, today.day, 9, 0),
-                  datetime(today.year, today.month, today.day, 10, 0), "work", "Еженедельная встреча"),
+                datetime(today.year, today.month, today.day, 10, 0), "Работа", "Еженедельная встреча"),
             Event("Обед с клиентом", datetime(today.year, today.month, today.day, 12, 30),
-                  datetime(today.year, today.month, today.day, 14, 0), "important", "Ресторан Центральный"),
+                datetime(today.year, today.month, today.day, 14, 0), "Важное", "Ресторан Центральный"),
             Event("Дедлайн проекта", (datetime.now() + timedelta(days=3)).replace(hour=18, minute=0, second=0, microsecond=0),
-                  (datetime.now() + timedelta(days=3)).replace(hour=19, minute=0, second=0, microsecond=0), "important"),
+                (datetime.now() + timedelta(days=3)).replace(hour=19, minute=0, second=0, microsecond=0), "Важное"),
             Event("День рождения Ани", (datetime.now() + timedelta(days=5)).replace(hour=19, minute=0, second=0, microsecond=0),
-                  (datetime.now() + timedelta(days=5)).replace(hour=22, minute=0, second=0, microsecond=0), "personal"),
+                (datetime.now() + timedelta(days=5)).replace(hour=22, minute=0, second=0, microsecond=0), "Личное"),
             Event("Код-ревью", (datetime.now() + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0),
-                  (datetime.now() + timedelta(days=1)).replace(hour=16, minute=30, second=0, microsecond=0), "work"),
+                (datetime.now() + timedelta(days=1)).replace(hour=16, minute=30, second=0, microsecond=0), "Работа"),
         ]
         for e in seed:
             self.db.add_event(e)
+
+    def _manage_categories(self):
+        """Открывает диалог управления категориями"""
+        dlg = CategoryDialog(self, self.db.category_manager)
+        if dlg.exec_() == QDialog.Accepted:
+            # Обновляем все view
+            self._on_event_changed()
+            # Обновляем цвета всех событий
+            for v in [self.list_view, self.day_view, self.week_view, self.month_view, self.year_view]:
+                v.refresh()
 
 # ─────────────────────────────────────────────
 # ENTRY POINT
