@@ -1860,19 +1860,19 @@ class ListView(QWidget):
         root.setSpacing(0)
 
         # Scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
 
         self._content = QWidget()
         self._content.setStyleSheet(f"background: {Colors.BG};")
         self._vbox = QVBoxLayout(self._content)
-        self._vbox.setContentsMargins(24, 16, 24, 24)
+        self._vbox.setContentsMargins(0, 8, 0, 8)
         self._vbox.setSpacing(0)
         self._vbox.addStretch()
 
-        scroll.setWidget(self._content)
-        root.addWidget(scroll)
+        self.scroll.setWidget(self._content)
+        root.addWidget(self.scroll)
 
     def refresh(self):
         # Remove all widgets except the trailing stretch
@@ -1935,8 +1935,9 @@ class ListView(QWidget):
     def _make_date_header(self, label: str, is_past: bool) -> QWidget:
         w = QWidget()
         w.setFixedHeight(36)
+        w.setStyleSheet(f"background: {Colors.SECONDARY_BG};")
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(0, 8, 0, 4)
+        lay.setContentsMargins(24, 8, 24, 4)
         lbl = QLabel(label)
         color = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
         lbl.setStyleSheet(
@@ -1964,13 +1965,6 @@ class ListView(QWidget):
             self.refresh()
             self.event_changed.emit()
 
-    def _on_delete(self, ev: 'Event'):
-        if QMessageBox.question(self, "Удалить", f'Удалить "{ev.title}"?',
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            self.db.delete_event(ev.id)
-            self.refresh()
-            self.event_changed.emit()
-
     def go_prev(self):  pass
     def go_next(self):  pass
     def go_today(self): pass
@@ -1978,106 +1972,107 @@ class ListView(QWidget):
 
 class EventRowWidget(QWidget):
     """Одна строка события в List View"""
-    edit_requested   = pyqtSignal(object)
+    edit_requested = pyqtSignal(object)
 
     def __init__(self, ev: 'Event', is_past: bool):
         super().__init__()
         self.ev = ev
-        self.setFixedHeight(56)  # Фиксированная высота
+        self.is_past = is_past
+        self.setFixedHeight(56)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
-        self._build(is_past)
-        self.setAttribute(Qt.WA_StyledBackground, True)  # Включаем поддержку стилей фона
+        self._build()
+        self._update_elided_texts()
     
     def resizeEvent(self, event):
-        """При изменении ширины окна пересчитываем обрезку текста"""
         super().resizeEvent(event)
         self._update_elided_texts()
 
-    def _build(self, is_past: bool):
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 4, 0, 4)
-        lay.setSpacing(12)
+    def _build(self):
+        # Используем QGridLayout для фиксированных колонок
+        layout = QGridLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(12)
+        layout.setColumnStretch(3, 1)  # Колонка с текстом растягивается
 
-        # Color dot
-        dot = QLabel()
-        dot.setFixedSize(10, 10)
-        dot.setStyleSheet(
-            f"background: {self.ev.color}; border-radius: 5px;"
-            f"{'opacity: 0.4;' if is_past else ''}"
+        # Колонка 0: Цветовая точка
+        self.dot = QLabel()
+        self.dot.setFixedSize(12, 12)
+        self.dot.setStyleSheet(
+            f"background: {self.ev.color}; border-radius: 6px;"
+            f"{'opacity: 0.4;' if self.is_past else ''}"
         )
-        lay.addWidget(dot)
+        layout.addWidget(self.dot, 0, 0, alignment=Qt.AlignVCenter)
 
-        # Time
+        # Колонка 1: Время
         time_str = f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}"
         self.time_lbl = QLabel(time_str)
         self.time_lbl.setFixedWidth(110)
-        alpha = Colors.SECONDARY_TEXT if is_past else Colors.SECONDARY_TEXT
+        alpha = Colors.SECONDARY_TEXT
         self.time_lbl.setStyleSheet(f"color: {alpha}; font-size: 12px; background: transparent;")
-        lay.addWidget(self.time_lbl)
+        layout.addWidget(self.time_lbl, 0, 1, alignment=Qt.AlignVCenter)
 
-        # Title и Description в одном вертикальном контейнере
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
+        # Колонка 2: Название и описание (вертикальный контейнер)
+        text_widget = QWidget()
+        text_layout = QVBoxLayout(text_widget)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
         
-        # Название события - одна строка с многоточием
+        # Название
+        tc = Colors.SECONDARY_TEXT if self.is_past else Colors.PRIMARY_TEXT
         self.title_lbl = QLabel()
-        tc = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
         self.title_lbl.setStyleSheet(
             f"color: {tc}; font-size: 13px; font-weight: 600; background: transparent;"
-            + ("text-decoration: line-through;" if is_past else "")
+            + ("text-decoration: line-through;" if self.is_past else "")
         )
         self.title_lbl.setWordWrap(False)
-        self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        text_col.addWidget(self.title_lbl)
+        text_layout.addWidget(self.title_lbl)
         
-        # Описание события - одна строка с многоточием (если есть)
+        # Описание
         self.desc_lbl = QLabel()
         self.desc_lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 11px; background: transparent;")
         self.desc_lbl.setWordWrap(False)
-        self.desc_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
         if self.ev.description:
-            text_col.addWidget(self.desc_lbl)
+            text_layout.addWidget(self.desc_lbl)
         else:
             self.desc_lbl.hide()
         
-        lay.addLayout(text_col, 1)
+        layout.addWidget(text_widget, 0, 2)
 
-        # Category badge
+        # Колонка 3: Иконка категории
         cat_map = {"Работа": "💼", "Личное": "🏠", "Важное": "⭐"}
-        badge = QLabel(cat_map.get(self.ev.category, "📌"))
-        badge.setFixedWidth(30)
-        badge.setStyleSheet("font-size: 14px; background: transparent;")
-        lay.addWidget(badge)
-
-        # Инициализируем тексты
-        self._update_elided_texts()
+        self.badge = QLabel(cat_map.get(self.ev.category, "📌"))
+        self.badge.setFixedWidth(40)
+        self.badge.setAlignment(Qt.AlignCenter)
+        self.badge.setStyleSheet("font-size: 16px; background: transparent;")
+        layout.addWidget(self.badge, 0, 3, alignment=Qt.AlignVCenter)
 
     def _update_elided_texts(self):
         """Обновляет тексты с обрезкой по ширине"""
-        available_width = self.width() - 180  # вычитаем: время (110) + бейдж (30) + отступы (40)
+        # Получаем доступную ширину для текстовой колонки
+        # Общая ширина минус: точка(12+12) + время(110+12) + иконка(40+12) + отступы(24) = ~222
+        available_width = self.width() - 222
         
-        if available_width > 0:
+        if available_width > 50:
+            # Обрезаем название
             font_metrics = QFontMetrics(self.title_lbl.font())
             self.title_lbl.setText(font_metrics.elidedText(self.ev.title, Qt.ElideRight, available_width))
             
+            # Обрезаем описание
             if self.ev.description and self.desc_lbl.isVisible():
                 desc_font_metrics = QFontMetrics(self.desc_lbl.font())
                 self.desc_lbl.setText(desc_font_metrics.elidedText(self.ev.description, Qt.ElideRight, available_width))
 
     def enterEvent(self, e):
-        """При наведении мыши - подсветка"""
         super().enterEvent(e)
         self.setStyleSheet(f"background: {Colors.ACCENT_LIGHT}; border-radius: 8px;")
 
     def leaveEvent(self, e):
-        """При уходе мыши - убираем подсветку"""
         super().leaveEvent(e)
         self.setStyleSheet("background: transparent;")
 
     def mouseDoubleClickEvent(self, e):
-        """Двойной клик - открываем событие для редактирования"""
         super().mouseDoubleClickEvent(e)
         self.edit_requested.emit(self.ev)
 
