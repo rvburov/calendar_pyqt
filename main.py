@@ -1,9 +1,3 @@
-"""
-Apple Calendar - MVP версия
-Установка: pip install PyQt5
-Запуск: python calendar_app.py
-"""
-
 import sys
 import sqlite3
 import os
@@ -190,7 +184,7 @@ class CategoryDialog(QDialog):
         
         # Заголовок
         title = QLabel("Управление категориями")
-        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {Colors.PRIMARY_TEXT};")
+        title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {Colors.PRIMARY_TEXT};")
         layout.addWidget(title)
         
         # Список категорий
@@ -270,7 +264,7 @@ class CategoryDialog(QDialog):
                 border: none;
                 border-radius: 6px;
                 padding: 6px 12px;
-                font-size: 12px;
+                font-size: 13px;
             }}
             QPushButton:hover {{
                 background: {Colors.SEPARATOR};
@@ -280,7 +274,7 @@ class CategoryDialog(QDialog):
                 border: 1px solid {Colors.SEPARATOR};
                 border-radius: 6px;
                 padding: 6px;
-                font-size: 12px;
+                font-size: 13px;
             }}
             QLineEdit:focus {{
                 border-color: {Colors.ACCENT};
@@ -554,7 +548,7 @@ class EventDialog(QDialog):
             }}
             QLabel {{
                 color: {Colors.SECONDARY_TEXT};
-                font-size: 12px;
+                font-size: 13px;
                 font-weight: 600;
             }}
             QLineEdit, QTextEdit, QComboBox, QDateEdit, QTimeEdit {{
@@ -809,7 +803,7 @@ class MonthView(QWidget):
             lbl = QLabel(d)
             lbl.setAlignment(Qt.AlignCenter)
             color = Colors.WEEKEND if i >= 5 else Colors.SECONDARY_TEXT
-            lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
+            lbl.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600;")
             h_lay.addWidget(lbl, 0, i)
         layout.addWidget(header)
 
@@ -991,7 +985,7 @@ class DayCell(QWidget):
 
             # Event title с обрезкой текста
             p.setPen(QColor("white"))
-            f2 = QFont("Helvetica Neue", 10)
+            f2 = QFont("Helvetica Neue", 13)
             p.setFont(f2)
             time_str = ev.start_dt.strftime("%H:%M")
             full_text = f"{time_str} {ev.title}"
@@ -1008,7 +1002,7 @@ class DayCell(QWidget):
         remaining = len(self.events) - max_events
         if remaining > 0:
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f3 = QFont("Helvetica Neue", 10)
+            f3 = QFont("Helvetica Neue", 13)
             p.setFont(f3)
             p.drawText(6, tag_y, w - 12, 16, Qt.AlignVCenter | Qt.AlignLeft, f"+{remaining} ещё")
 
@@ -1133,7 +1127,7 @@ class DayCanvas(QWidget):
         minute = (minute // 15) * 15  # snap to 15 min
         self.double_clicked_time.emit(QTime(min(hour, 23), minute))
 
-    def mousePressEvent(self, e):
+    def mouseDoubleClickEvent(self, e):
         for rect, ev in self._event_rects:
             if rect.contains(e.pos()):
                 self.event_clicked.emit(ev)
@@ -1146,37 +1140,36 @@ class DayCanvas(QWidget):
 
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # Hour rows
         for hour in range(24):
             y = hour * self.HOUR_H
-
-            # Hour label
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f = QFont("Helvetica Neue", 11)
+            f = QFont("Helvetica Neue", 10)
             p.setFont(f)
-            label = f"{hour:02d}:00"
-            p.drawText(0, y, self.TIME_W - 8, self.HOUR_H, Qt.AlignRight | Qt.AlignTop, label)
-
-            # Line
+            p.drawText(0, y, self.TIME_W - 8, self.HOUR_H, Qt.AlignRight | Qt.AlignTop,
+                    f"{hour:02d}:00")
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(self.TIME_W, y, w - self.PAD_R, y)
-
-            # Half-hour dashed line
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w - self.PAD_R, y + self.HOUR_H // 2)
 
-        # Группировка overlapping событий
+        # Events - теперь как в WeekView
+        self._event_rects = []
+        
+        # Группируем overlapping события
         overlapping_groups = self._group_overlapping_events(self.events)
         
-        # Events
-        self._event_rects = []
-        available_width = w - self.TIME_W - self.PAD_R - 4
+        x = self.TIME_W + 3
+        cw = w - self.TIME_W - self.PAD_R - 6
         
         for group in overlapping_groups:
             group_size = len(group)
             if group_size == 0:
                 continue
                 
-            # Для каждого события в группе вычисляем его долю ширины
+            # Делим ширину между событиями в группе
+            segment_width = cw // group_size
+            
             for idx, ev in enumerate(group):
                 sh, sm = ev.start_dt.hour, ev.start_dt.minute
                 eh, em = ev.end_dt.hour, ev.end_dt.minute
@@ -1185,67 +1178,54 @@ class DayCanvas(QWidget):
                 if y2 <= y1:
                     y2 = y1 + self.HOUR_H // 2
 
-                # Вычисляем ширину для каждого события (пропорционально)
-                segment_width = available_width // group_size
-                x_offset = self.TIME_W + 4 + (idx * segment_width)
-                
-                rect = QRect(x_offset, y1 + 2, segment_width - 2, y2 - y1 - 4)
+                # Сдвигаем каждый блок в группе
+                x_offset = x + (idx * segment_width)
+                rect = QRect(x_offset, y1 + 1, segment_width - 2, y2 - y1 - 2)
+
                 color = QColor(ev.color)
-
-                # Shadow
-                p.setPen(Qt.NoPen)
-                shadow_rect = rect.adjusted(2, 2, 2, 2)
-                p.setBrush(QColor(0, 0, 0, 20))
-                path_s = QPainterPath()
-                path_s.addRoundedRect(shadow_rect.x(), shadow_rect.y(),
-                                    shadow_rect.width(), shadow_rect.height(), 6, 6)
-                p.drawPath(path_s)
-
-                # Event bg
+                
+                # Отрисовка
                 light = QColor(color)
-                light.setAlpha(30)
+                light.setAlpha(25)
                 p.setBrush(QBrush(light))
-                p.setPen(QPen(color, 1.5))
+                p.setPen(Qt.NoPen)
                 path = QPainterPath()
-                path.addRoundedRect(rect.x(), rect.y(), rect.width(), rect.height(), 6, 6)
+                path.addRoundedRect(rect.x(), rect.y(), rect.width(), rect.height(), 5, 5)
                 p.drawPath(path)
 
-                # Left accent bar
                 p.setBrush(QBrush(color))
                 p.setPen(Qt.NoPen)
                 p.drawRoundedRect(rect.x(), rect.y(), 4, rect.height(), 2, 2)
 
-                # Text (уменьшаем шрифт если нужно)
                 p.setPen(color.darker(140))
-                title_font = QFont("Helvetica Neue", 11 if group_size > 2 else 12, QFont.DemiBold)
-                p.setFont(title_font)
-                time_str = f"{ev.start_dt.strftime('%H:%M')}"
-                text_rect = rect.adjusted(10, 4, -4, -4)
-                
-                # Вместо текущего кода с p.drawText, используйте:
-                if rect.height() > 32:
+                f2 = QFont("Helvetica Neue", 10, QFont.Normal)
+                p.setFont(f2)
+                tr = rect.adjusted(8, 3, -3, -3)
+                time_s = f"{ev.start_dt.strftime('%H:%M')}"
+
+                font_metrics = QFontMetrics(f2)
+
+                if rect.height() > 28:
                     if group_size > 2:
-                        # Для маленьких блоков
-                        full_text = f"{ev.title[:15]}\n{time_str}"
-                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, full_text)
+                        short_title = ev.title[:10] + "..." if len(ev.title) > 10 else ev.title
+                        p.drawText(tr, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
+                                f"{short_title}\n{time_s}")
                     else:
-                        # Полный текст с обрезкой
-                        font_metrics = QFontMetrics(title_font)
-                        available_width = rect.width() - 14
+                        available_width = rect.width() - 11
                         elided_title = font_metrics.elidedText(ev.title, Qt.ElideRight, available_width)
-                        full_text = f"{elided_title}\n{time_str}"
-                        p.drawText(text_rect, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, full_text)
+                        p.drawText(tr, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
+                                f"{elided_title}\n{time_s}")
                 else:
                     if group_size > 2:
-                        full_text = f"{ev.title[:8]} {time_str}"
-                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, full_text)
+                        short_title = ev.title[:6] + "..." if len(ev.title) > 6 else ev.title
+                        p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, f"{short_title} {time_s}")
                     else:
-                        # Обрезаем длинное название
-                        font_metrics = QFontMetrics(title_font)
-                        available_width = rect.width() - 14
-                        full_text = f"{ev.title} {time_str}"
+                        available_width = rect.width() - 11
+                        full_text = f"{ev.title} {time_s}"
                         elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
-                        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
+                        p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
+                
+                self._event_rects.append((rect, ev))
 
         # Current time line
         if self.current_date == date.today():
@@ -1424,7 +1404,7 @@ class WeekHeaderBar(QWidget):
 
             # weekday name
             p.setPen(QColor(Colors.ACCENT if is_today else Colors.SECONDARY_TEXT))
-            f_name = QFont("Helvetica Neue", 11, QFont.DemiBold)
+            f_name = QFont("Helvetica Neue", 13, QFont.DemiBold)
             p.setFont(f_name)
             p.drawText(int(x), 4, int(col_w), 18, Qt.AlignCenter, self.day_names[i])
 
@@ -1439,7 +1419,7 @@ class WeekHeaderBar(QWidget):
             else:
                 p.setPen(QColor(Colors.PRIMARY_TEXT))
 
-            f_num = QFont("Helvetica Neue", 15, QFont.DemiBold if is_today else QFont.Normal)
+            f_num = QFont("Helvetica Neue", 13, QFont.DemiBold if is_today else QFont.Normal)
             p.setFont(f_num)
             p.drawText(int(x), 22, int(col_w), 26, Qt.AlignCenter, str(d.day))
 
@@ -1498,7 +1478,7 @@ class WeekCanvas(QWidget):
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f = QFont("Helvetica Neue", 10)
+            f = QFont("Helvetica Neue", 13)
             p.setFont(f)
             p.drawText(0, y, self.TIME_W - 6, self.HOUR_H, Qt.AlignRight | Qt.AlignTop,
                        f"{hour:02d}:00")
@@ -1573,7 +1553,7 @@ class WeekCanvas(QWidget):
 
                     # Вместо текущего кода:
                     p.setPen(color.darker(140))
-                    f2 = QFont("Helvetica Neue", 9 if group_size > 2 else 10, QFont.DemiBold)
+                    f2 = QFont("Helvetica Neue", 13, QFont.DemiBold)
                     p.setFont(f2)
                     tr = rect.adjusted(8, 3, -3, -3)
                     time_s = f"{ev.start_dt.strftime('%H:%M')}"
@@ -1766,7 +1746,7 @@ class YearCanvas(QWidget):
             # Month name
             is_cur_month = (self.year == self.today.year and m + 1 == self.today.month)
             p.setPen(QColor(Colors.ACCENT if is_cur_month else Colors.PRIMARY_TEXT))
-            f_title = QFont("Helvetica Neue", 12, QFont.DemiBold)
+            f_title = QFont("Helvetica Neue", 13, QFont.DemiBold)
             p.setFont(f_title)
             p.drawText(mx + 10, my + 6, mw - 20, 22, Qt.AlignLeft | Qt.AlignVCenter,
                        YearView.MONTH_NAMES[m])
@@ -1894,7 +1874,7 @@ class ListView(QWidget):
         if not events:
             lbl = QLabel("Нет событий.\nНажмите «+ Событие» чтобы добавить.")
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 15px; padding: 60px;")
+            lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 13px; padding: 60px;")
             self._vbox.insertWidget(0, lbl)
             return
 
@@ -2205,18 +2185,18 @@ class NavBar(QWidget):
         layout.addWidget(self.today_btn)
 
         # Prev / Next
-        self.prev_btn = self._make_btn("‹")
-        self.prev_btn.setFixedWidth(32)
+        self.prev_btn = self._make_arrow_btn("<")
         self.prev_btn.clicked.connect(self.prev_clicked)
-        self.next_btn = self._make_btn("›")
-        self.next_btn.setFixedWidth(32)
+
+        self.next_btn = self._make_arrow_btn(">")
         self.next_btn.clicked.connect(self.next_clicked)
+
         layout.addWidget(self.prev_btn)
         layout.addWidget(self.next_btn)
 
         # Title
         self.title_lbl = QLabel()
-        self.title_lbl.setStyleSheet(f"color: {Colors.PRIMARY_TEXT}; font-size: 15px; font-weight: 600; border: none;")
+        self.title_lbl.setStyleSheet(f"color: {Colors.PRIMARY_TEXT}; font-size: 13px; font-weight: 600; border: none;")
         layout.addWidget(self.title_lbl)
 
         layout.addStretch()
@@ -2230,7 +2210,7 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 6px 12px;
+                padding: 6px 18px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -2249,7 +2229,7 @@ class NavBar(QWidget):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 6px 16px;
+                padding: 6px 18px;
                 font-size: 13px;
                 font-weight: 600;
             }}
@@ -2258,6 +2238,24 @@ class NavBar(QWidget):
         self.add_btn.clicked.connect(self.add_clicked)
         layout.addWidget(self.add_btn)
 
+    def _make_arrow_btn(self, text: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {Colors.SECONDARY_BG};
+                color: {Colors.PRIMARY_TEXT};
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                text-align: center;
+            }}
+            QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
+        """)
+        return btn
+    
     def _make_btn(self, text: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setCursor(Qt.PointingHandCursor)
@@ -2267,7 +2265,7 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 4px 12px;
+                padding: 6px 16px;
                 font-size: 13px;
             }}
             QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
