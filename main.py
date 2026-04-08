@@ -579,7 +579,7 @@ class EventDialog(QDialog):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 8px 24px;
+                padding: 0px;
                 font-size: 13px;
                 font-weight: 600;
             }}
@@ -591,7 +591,7 @@ class EventDialog(QDialog):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 8px 24px;
+                padding: 0px;
                 font-size: 13px;
             }}
             QPushButton#cancel_btn:hover {{
@@ -602,7 +602,7 @@ class EventDialog(QDialog):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 8px 16px;
+                padding: 0px;
                 font-size: 13px;
             }}
         """)
@@ -678,15 +678,25 @@ class EventDialog(QDialog):
         if self.event:
             del_btn = QPushButton("Удалить")
             del_btn.setObjectName("delete_btn")
+            del_btn.setFixedHeight(30)
+            del_btn.setFixedWidth(120)
             del_btn.clicked.connect(self._delete)
             btn_layout.addWidget(del_btn)
+        
         btn_layout.addStretch()
+        
         cancel_btn = QPushButton("Отмена")
         cancel_btn.setObjectName("cancel_btn")
+        cancel_btn.setFixedHeight(30)
+        cancel_btn.setFixedWidth(120)
         cancel_btn.clicked.connect(self.reject)
+        
         save_btn = QPushButton("Сохранить")
         save_btn.setObjectName("save_btn")
+        save_btn.setFixedHeight(30)
+        save_btn.setFixedWidth(120)
         save_btn.clicked.connect(self._save)
+        
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
@@ -1139,18 +1149,24 @@ class DayCanvas(QWidget):
         self._event_rects = []
         self.update()
 
+    def mousePressEvent(self, e):
+        """Одиночный клик - можно оставить пустым или добавить выделение"""
+        pass
+
     def mouseDoubleClickEvent(self, e):
+        """Двойной клик - открыть событие или создать новое"""
+        # Проверяем, попали ли в существующее событие
+        for rect, ev in self._event_rects:
+            if rect.contains(e.pos()):
+                self.event_clicked.emit(ev)  # открыть существующее событие
+                return
+        
+        # Пустое место - создаём новое событие
         y = e.pos().y()
         hour = y // self.HOUR_H
         minute = (y % self.HOUR_H) * 60 // self.HOUR_H
-        minute = (minute // 15) * 15  # snap to 15 min
+        minute = (minute // 15) * 15  # округляем до 15 минут
         self.double_clicked_time.emit(QTime(min(hour, 23), minute))
-
-    def mouseDoubleClickEvent(self, e):
-        for rect, ev in self._event_rects:
-            if rect.contains(e.pos()):
-                self.event_clicked.emit(ev)
-                return
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -1457,22 +1473,29 @@ class WeekCanvas(QWidget):
         self._event_rects = []
         self.update()
 
+    def mousePressEvent(self, e):
+        """Одиночный клик - можно оставить пустым"""
+        pass
+
     def mouseDoubleClickEvent(self, e):
+        """Двойной клик - открыть событие или создать новое"""
         if not self.days:
             return
-        x, y = e.pos().x(), e.pos().y()
-        col_w = (self.width() - self.TIME_W) / 5
-        col   = int((x - self.TIME_W) / col_w)
-        if 0 <= col < 5:
-            hour   = y // self.HOUR_H
-            minute = ((y % self.HOUR_H) * 60 // self.HOUR_H // 15) * 15
-            self.slot_double_clicked.emit(self.days[col], QTime(min(hour, 23), minute))
-
-    def mousePressEvent(self, e):
+        
+        # Проверяем, попали ли в существующее событие
         for rect, ev in self._event_rects:
             if rect.contains(e.pos()):
-                self.event_clicked.emit(ev)
+                self.event_clicked.emit(ev)  # открыть существующее событие
                 return
+        
+        # Пустое место - создаём новое событие
+        x, y = e.pos().x(), e.pos().y()
+        col_w = (self.width() - self.TIME_W) / 5
+        col = int((x - self.TIME_W) / col_w)
+        if 0 <= col < 5:
+            hour = y // self.HOUR_H
+            minute = ((y % self.HOUR_H) * 60 // self.HOUR_H // 15) * 15
+            self.slot_double_clicked.emit(self.days[col], QTime(min(hour, 23), minute))
 
     def paintEvent(self, e):
         if not self.days:
@@ -1549,7 +1572,7 @@ class WeekCanvas(QWidget):
 
                     color = QColor(ev.color)
                     
-                    # Отрисовка (остается без изменений)
+                    # Отрисовка
                     light = QColor(color)
                     light.setAlpha(25)
                     p.setBrush(QBrush(light))
@@ -1562,7 +1585,6 @@ class WeekCanvas(QWidget):
                     p.setPen(Qt.NoPen)
                     p.drawRoundedRect(rect.x(), rect.y(), 4, rect.height(), 2, 2)
 
-                    # Вместо текущего кода:
                     p.setPen(color.darker(140))
                     f2 = QFont("Helvetica Neue", 10, QFont.Normal)
                     p.setFont(f2)
@@ -1590,6 +1612,8 @@ class WeekCanvas(QWidget):
                             full_text = f"{ev.title} {time_s}"
                             elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
                             p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
+                    
+                    self._event_rects.append((rect, ev))
 
         # Current-time line
         if today in self.days:
@@ -1714,9 +1738,9 @@ class YearCanvas(QWidget):
     DAY_LABELS = ["П","В","С","Ч","П","С","В"]
     
     # ПАРАМЕТРЫ БЛОКОВ ГОДА
-    CARD_WIDTH = 240      # ШИРИНА КАРТОЧКИ МЕСЯЦА
-    CARD_HEIGHT = 220     # ВЫСОТА КАРТОЧКИ МЕСЯЦА
-    GAP = 8               # РАССТОЯНИЕ МЕЖДУ МЕСЯЦАМИ
+    CARD_WIDTH = 220      # ШИРИНА КАРТОЧКИ МЕСЯЦА
+    CARD_HEIGHT = 200     # ВЫСОТА КАРТОЧКИ МЕСЯЦА
+    GAP = 26               # РАССТОЯНИЕ МЕЖДУ МЕСЯЦАМИ
     PAD = 20              # ОТСТУП ОТ КРАЁВ
 
     def __init__(self, parent=None):
@@ -1763,12 +1787,6 @@ class YearCanvas(QWidget):
             month_rect = QRect(mx, my, mw, mh)
             self._month_rects.append((month_rect, m + 1))
 
-            # Card bg
-            p.setBrush(QBrush(QColor(Colors.BG)))
-            p.setPen(QPen(QColor("#C0C0C0"), 0.5))
-            path = QPainterPath()
-            path.addRoundedRect(mx, my, mw, mh, 6, 6)
-            p.drawPath(path)
 
             # Month name
             is_cur_month = (self.year == self.today.year and m + 1 == self.today.month)
@@ -1814,22 +1832,21 @@ class YearCanvas(QWidget):
                 has_event = (d in self.event_dates)
 
                 if is_today:
-                    cx = dx + dw // 2
-                    cy = dy + dh // 2
+                    circle_size = 18  # размер кружка
+                    cx = dx + dw // 2 - circle_size // 2
+                    cy = dy + dh // 2 - circle_size // 2
+                    
                     p.setBrush(QBrush(QColor(Colors.RED)))
                     p.setPen(Qt.NoPen)
-                    r = min(dw, dh) // 2 - 1
-                    p.drawEllipse(cx - r, cy - r, r * 2, r * 2)
+                    p.drawEllipse(cx, cy, circle_size, circle_size)
                     p.setPen(QColor("white"))
-                elif has_event and is_this_month:
-                    p.setPen(QColor(Colors.PRIMARY_TEXT if is_this_month else Colors.SEPARATOR))
+                    p.drawText(cx, cy, circle_size, circle_size, Qt.AlignCenter, str(d.day))
                 else:
                     alpha_color = Colors.PRIMARY_TEXT if is_this_month else Colors.SEPARATOR
                     p.setPen(QColor(alpha_color))
                     if dc >= 5 and is_this_month:
                         p.setPen(QColor(Colors.WEEKEND))
-
-                p.drawText(dx, dy, dw, dh, Qt.AlignCenter, str(d.day))
+                    p.drawText(dx, dy, dw, dh, Qt.AlignCenter, str(d.day))
 
                 # Dot for events
                 if has_event and is_this_month and not is_today:
