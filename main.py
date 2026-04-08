@@ -2095,7 +2095,7 @@ class SegmentedControl(QWidget):
         super().__init__()
         self.labels = labels
         self.active = 3  # default = Month
-        self.setFixedHeight(30)
+        self.setFixedHeight(32)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -2103,6 +2103,7 @@ class SegmentedControl(QWidget):
         for i, lbl in enumerate(labels):
             btn = QPushButton(lbl)
             btn.setFixedHeight(28)
+            btn.setFixedWidth(75)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda checked, idx=i: self._on_click(idx))
             layout.addWidget(btn)
@@ -2126,6 +2127,7 @@ class SegmentedControl(QWidget):
                         padding: 0 14px;
                         font-size: 13px;
                         font-weight: 600;
+                        min-width: 70px;
                     }}
                 """)
             else:
@@ -2137,6 +2139,7 @@ class SegmentedControl(QWidget):
                         border-radius: 7px;
                         padding: 0 14px;
                         font-size: 13px;
+                        min-width: 70px;
                     }}
                     QPushButton:hover {{
                         background: {Colors.SEPARATOR};
@@ -2173,14 +2176,20 @@ class NavBar(QWidget):
 
         # Today button
         self.today_btn = self._make_btn("Сегодня")
+        self.today_btn.setFixedHeight(30)
+        self.today_btn.setFixedWidth(120)
         self.today_btn.clicked.connect(self.today_clicked)
         layout.addWidget(self.today_btn)
 
         # Prev / Next
         self.prev_btn = self._make_arrow_btn("<")
+        self.prev_btn.setFixedHeight(30)
+        self.prev_btn.setFixedWidth(30)
         self.prev_btn.clicked.connect(self.prev_clicked)
 
         self.next_btn = self._make_arrow_btn(">")
+        self.next_btn.setFixedHeight(30)
+        self.next_btn.setFixedWidth(30)
         self.next_btn.clicked.connect(self.next_clicked)
 
         layout.addWidget(self.prev_btn)
@@ -2194,7 +2203,9 @@ class NavBar(QWidget):
         layout.addStretch()
 
         # Кнопка управления категориями (новая)
-        self.cat_btn = QPushButton("📁 Категории")
+        self.cat_btn = QPushButton("Категории")
+        self.cat_btn.setFixedHeight(30)
+        self.cat_btn.setFixedWidth(120)
         self.cat_btn.setCursor(Qt.PointingHandCursor)
         self.cat_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2202,7 +2213,6 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 6px 18px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -2213,7 +2223,9 @@ class NavBar(QWidget):
         layout.addWidget(self.cat_btn)
 
         # Add event button
-        self.add_btn = QPushButton("+ Событие")
+        self.add_btn = QPushButton("Событие")
+        self.add_btn.setFixedHeight(30)
+        self.add_btn.setFixedWidth(120)
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2221,7 +2233,6 @@ class NavBar(QWidget):
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 6px 18px;
                 font-size: 13px;
                 font-weight: 600;
             }}
@@ -2239,7 +2250,6 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 6px 12px;
                 font-size: 13px;
                 font-weight: 600;
                 text-align: center;
@@ -2257,7 +2267,6 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                padding: 6px 16px;
                 font-size: 13px;
             }}
             QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
@@ -2295,7 +2304,7 @@ class MainWindow(QMainWindow):
             border-bottom: 1px solid {Colors.SEPARATOR};
         """)
         tb_layout = QHBoxLayout(top_bar)
-        tb_layout.setContentsMargins(16, 10, 16, 10)
+        tb_layout.setContentsMargins(16, 0, 16, 10)
         self.segmented = SegmentedControl(["Список", "День", "Неделя", "Месяц", "Год"])
         self.segmented.tab_changed.connect(self._switch_view)
         tb_layout.addStretch()
