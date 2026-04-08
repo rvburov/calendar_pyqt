@@ -182,11 +182,6 @@ class CategoryDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        # Заголовок
-        title = QLabel("Управление категориями")
-        title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {Colors.PRIMARY_TEXT};")
-        layout.addWidget(title)
-        
         # Список категорий
         self.category_list = QListWidget()
         self.category_list.setStyleSheet(f"""
@@ -232,23 +227,29 @@ class CategoryDialog(QDialog):
         # Кнопки управления
         btn_layout = QHBoxLayout()
         
-        self.add_btn = QPushButton("➕ Добавить")
+        self.add_btn = QPushButton("Добавить")
+        self.add_btn.setFixedHeight(30)
+        self.add_btn.setFixedWidth(90)
         self.add_btn.clicked.connect(self._add_category)
         btn_layout.addWidget(self.add_btn)
         
-        self.update_btn = QPushButton("✏️ Изменить")
+        self.update_btn = QPushButton("Изменить")
+        self.update_btn.setFixedHeight(30)
+        self.update_btn.setFixedWidth(90)
         self.update_btn.clicked.connect(self._update_category)
-        self.update_btn.setEnabled(False)
         btn_layout.addWidget(self.update_btn)
         
-        self.delete_btn = QPushButton("🗑️ Удалить")
+        self.delete_btn = QPushButton("Удалить")
+        self.delete_btn.setFixedHeight(30)
+        self.delete_btn.setFixedWidth(90)
         self.delete_btn.clicked.connect(self._delete_category)
-        self.delete_btn.setEnabled(False)
         btn_layout.addWidget(self.delete_btn)
         
         btn_layout.addStretch()
         
         close_btn = QPushButton("Закрыть")
+        close_btn.setFixedHeight(30)
+        close_btn.setFixedWidth(90)
         close_btn.clicked.connect(self.accept)
         btn_layout.addWidget(close_btn)
         
@@ -404,10 +405,20 @@ class Event:
 
 class DatabaseManager:
     def __init__(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar.db")
+        # Определяем путь для хранения базы
+        if getattr(sys, 'frozen', False):
+            # Запущено как .exe - сохраняем в AppData
+            app_data = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'MyCalendar')
+        else:
+            # Запущено как .py - сохраняем рядом со скриптом
+            app_data = os.path.dirname(os.path.abspath(__file__))
+        
+        os.makedirs(app_data, exist_ok=True)
+        db_path = os.path.join(app_data, "calendar.db")
+        
         self.conn = sqlite3.connect(db_path)
         self._create_table()
-        self.category_manager = CategoryManager(self.conn)  # Добавьте эту строку
+        self.category_manager = CategoryManager(self.conn)
 
     def _create_table(self):
         self.conn.execute("""
@@ -602,7 +613,7 @@ class EventDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         # Title
-        lbl_title = QLabel("НАЗВАНИЕ")
+        lbl_title = QLabel("Название")
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("Добавить название")
         layout.addWidget(lbl_title)
@@ -613,7 +624,7 @@ class EventDialog(QDialog):
         dt_layout.setSpacing(10)
 
         date_col = QVBoxLayout()
-        date_col.addWidget(QLabel("ДАТА"))
+        date_col.addWidget(QLabel("Дата"))
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(
@@ -623,7 +634,7 @@ class EventDialog(QDialog):
         date_col.addWidget(self.date_edit)
 
         start_col = QVBoxLayout()
-        start_col.addWidget(QLabel("НАЧАЛО"))
+        start_col.addWidget(QLabel("Начало"))
         self.start_time = QTimeEdit()
         self.start_time.setDisplayFormat("HH:mm")
         if preset_time:
@@ -633,7 +644,7 @@ class EventDialog(QDialog):
         start_col.addWidget(self.start_time)
 
         end_col = QVBoxLayout()
-        end_col.addWidget(QLabel("КОНЕЦ"))
+        end_col.addWidget(QLabel("Конец"))
         self.end_time = QTimeEdit()
         self.end_time.setDisplayFormat("HH:mm")
         if preset_time:
@@ -649,14 +660,14 @@ class EventDialog(QDialog):
         layout.addLayout(dt_layout)
 
         # Category
-        layout.addWidget(QLabel("КАТЕГОРИЯ"))
+        layout.addWidget(QLabel("Категория"))
         self.category_combo = QComboBox()
         self._load_categories()
-        self.category_combo.currentTextChanged.connect(self._on_category_changed)  # Добавьте эту строку
+        self.category_combo.currentTextChanged.connect(self._on_category_changed)
         layout.addWidget(self.category_combo)
 
         # Description
-        layout.addWidget(QLabel("ОПИСАНИЕ"))
+        layout.addWidget(QLabel("Описание"))
         self.desc_edit = QTextEdit()
         self.desc_edit.setPlaceholderText("Добавить описание (необязательно)")
         self.desc_edit.setMaximumHeight(80)
@@ -1651,12 +1662,26 @@ class YearView(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        
         scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        scroll.setWidgetResizable(True)  # Контейнер может растягиваться
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setAlignment(Qt.AlignCenter)
+        scroll.setStyleSheet(f"background: {Colors.BG};")
+        
+        # Контейнер для центрирования canvas
+        container = QWidget()
+        container.setStyleSheet(f"background: {Colors.BG};")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.setAlignment(Qt.AlignCenter)  # ← центрируем содержимое
+        
         self._canvas = YearCanvas(self)
         self._canvas.month_clicked.connect(self.month_selected)
-        scroll.setWidget(self._canvas)
+        container_layout.addWidget(self._canvas)
+        
+        scroll.setWidget(container)
         layout.addWidget(scroll)
 
     def refresh(self):
@@ -1685,21 +1710,30 @@ class YearView(QWidget):
 class YearCanvas(QWidget):
     month_clicked = pyqtSignal(date)
 
-    COLS = 3   # 3 колонки × 4 строки
+    COLS = 3
     DAY_LABELS = ["П","В","С","Ч","П","С","В"]
+    
+    # ПАРАМЕТРЫ БЛОКОВ ГОДА
+    CARD_WIDTH = 240      # ШИРИНА КАРТОЧКИ МЕСЯЦА
+    CARD_HEIGHT = 220     # ВЫСОТА КАРТОЧКИ МЕСЯЦА
+    GAP = 8               # РАССТОЯНИЕ МЕЖДУ МЕСЯЦАМИ
+    PAD = 20              # ОТСТУП ОТ КРАЁВ
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.year        = date.today().year
-        self.event_dates: set  = set()
-        self.today       = date.today()
+        self.year = date.today().year
+        self.event_dates: set = set()
+        self.today = date.today()
         self._month_rects: List[tuple] = []
-        self.setMinimumHeight(800)
+        
+        total_width = self.PAD * 2 + self.COLS * self.CARD_WIDTH + (self.COLS - 1) * self.GAP
+        total_height = self.PAD * 2 + 4 * self.CARD_HEIGHT + 3 * self.GAP
+        self.setFixedSize(total_width, total_height)
 
     def set_data(self, year: int, event_dates: set, today: date):
-        self.year        = year
+        self.year = year
         self.event_dates = event_dates
-        self.today       = today
+        self.today = today
         self._month_rects = []
         self.update()
 
@@ -1716,36 +1750,29 @@ class YearCanvas(QWidget):
 
         p.fillRect(0, 0, W, H, QColor(Colors.BG))
 
-        ROWS   = 4
-        COLS   = self.COLS
-        pad    = 20
-        gap    = 16
-        cell_w = (W - pad * 2 - gap * (COLS - 1)) / COLS
-        cell_h = (H - pad * 2 - gap * (ROWS - 1)) / ROWS
-
         self._month_rects = []
 
         for m in range(12):
-            row = m // COLS
-            col = m %  COLS
-            mx  = int(pad + col * (cell_w + gap))
-            my  = int(pad + row * (cell_h + gap))
-            mw  = int(cell_w)
-            mh  = int(cell_h)
+            row = m // self.COLS
+            col = m % self.COLS
+            mx = self.PAD + col * (self.CARD_WIDTH + self.GAP)
+            my = self.PAD + row * (self.CARD_HEIGHT + self.GAP)
+            mw = self.CARD_WIDTH
+            mh = self.CARD_HEIGHT
 
             month_rect = QRect(mx, my, mw, mh)
             self._month_rects.append((month_rect, m + 1))
 
             # Card bg
-            p.setBrush(QBrush(QColor(Colors.SECONDARY_BG)))
-            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(Colors.BG)))
+            p.setPen(QPen(QColor("#C0C0C0"), 0.5))
             path = QPainterPath()
-            path.addRoundedRect(mx, my, mw, mh, 10, 10)
+            path.addRoundedRect(mx, my, mw, mh, 6, 6)
             p.drawPath(path)
 
             # Month name
             is_cur_month = (self.year == self.today.year and m + 1 == self.today.month)
-            p.setPen(QColor(Colors.ACCENT if is_cur_month else Colors.PRIMARY_TEXT))
+            p.setPen(QColor(Colors.RED if is_cur_month else Colors.PRIMARY_TEXT))
             f_title = QFont("Helvetica Neue", 10, QFont.DemiBold)
             p.setFont(f_title)
             p.drawText(mx + 10, my + 6, mw - 20, 22, Qt.AlignLeft | Qt.AlignVCenter,
@@ -1754,7 +1781,7 @@ class YearCanvas(QWidget):
             # Day-of-week headers
             header_y = my + 30
             day_cell_w = mw / 7
-            day_cell_h = (mh - 34) / 7  # 6 week rows + header
+            day_cell_h = (mh - 34) / 7
 
             p.setPen(QColor(Colors.SECONDARY_TEXT))
             f_hdr = QFont("Helvetica Neue", 10)
@@ -1768,7 +1795,7 @@ class YearCanvas(QWidget):
 
             # Days grid
             first = date(self.year, m + 1, 1)
-            start_wd = first.weekday()  # 0=Mon
+            start_wd = first.weekday()
             grid_start = first - timedelta(days=start_wd)
             f_day = QFont("Helvetica Neue", 10)
             p.setFont(f_day)
@@ -1776,27 +1803,25 @@ class YearCanvas(QWidget):
             for di in range(42):
                 dr = di // 7
                 dc = di % 7
-                d  = grid_start + timedelta(days=di)
+                d = grid_start + timedelta(days=di)
                 dx = int(mx + dc * day_cell_w)
                 dy = int(header_y + (dr + 1) * day_cell_h)
                 dw = int(day_cell_w)
                 dh = int(day_cell_h)
 
                 is_this_month = (d.month == m + 1)
-                is_today      = (d == self.today)
-                has_event     = (d in self.event_dates)
+                is_today = (d == self.today)
+                has_event = (d in self.event_dates)
 
                 if is_today:
-                    # Blue circle
                     cx = dx + dw // 2
                     cy = dy + dh // 2
-                    p.setBrush(QBrush(QColor(Colors.ACCENT)))
+                    p.setBrush(QBrush(QColor(Colors.RED)))
                     p.setPen(Qt.NoPen)
                     r = min(dw, dh) // 2 - 1
                     p.drawEllipse(cx - r, cy - r, r * 2, r * 2)
                     p.setPen(QColor("white"))
                 elif has_event and is_this_month:
-                    # Small dot below number — draw after text
                     p.setPen(QColor(Colors.PRIMARY_TEXT if is_this_month else Colors.SEPARATOR))
                 else:
                     alpha_color = Colors.PRIMARY_TEXT if is_this_month else Colors.SEPARATOR
@@ -1810,7 +1835,7 @@ class YearCanvas(QWidget):
                 if has_event and is_this_month and not is_today:
                     dot_r = 2
                     cx = dx + dw // 2
-                    cy = dy + dh - 3
+                    cy = dy + dh - 1
                     p.setBrush(QBrush(QColor(Colors.ACCENT)))
                     p.setPen(Qt.NoPen)
                     p.drawEllipse(cx - dot_r, cy - dot_r, dot_r * 2, dot_r * 2)
@@ -2167,7 +2192,7 @@ class NavBar(QWidget):
     prev_clicked  = pyqtSignal()
     next_clicked  = pyqtSignal()
     add_clicked   = pyqtSignal()
-    manage_categories = pyqtSignal()  # Добавьте этот сигнал
+    manage_categories = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -2189,28 +2214,31 @@ class NavBar(QWidget):
         self.today_btn.clicked.connect(self.today_clicked)
         layout.addWidget(self.today_btn)
 
-        # Prev / Next
+        # Prev button <
         self.prev_btn = self._make_arrow_btn("<")
-        self.prev_btn.setFixedHeight(30)
-        self.prev_btn.setFixedWidth(30)
+        self.prev_btn.setFixedSize(30, 30)
         self.prev_btn.clicked.connect(self.prev_clicked)
-
-        self.next_btn = self._make_arrow_btn(">")
-        self.next_btn.setFixedHeight(30)
-        self.next_btn.setFixedWidth(30)
-        self.next_btn.clicked.connect(self.next_clicked)
-
         layout.addWidget(self.prev_btn)
+
+        # Next button >
+        self.next_btn = self._make_arrow_btn(">")
+        self.next_btn.setFixedSize(30, 30)
+        self.next_btn.clicked.connect(self.next_clicked)
         layout.addWidget(self.next_btn)
 
-        # Title
+        # Левая растяжка перед заголовком
+        layout.addStretch()
+
+        # Title - по центру
         self.title_lbl = QLabel()
+        self.title_lbl.setAlignment(Qt.AlignCenter)
         self.title_lbl.setStyleSheet(f"color: {Colors.PRIMARY_TEXT}; font-size: 13px; font-weight: 600; border: none;")
         layout.addWidget(self.title_lbl)
 
+        # Правая растяжка после заголовка
         layout.addStretch()
 
-        # Кнопка управления категориями (новая)
+        # Кнопка управления категориями
         self.cat_btn = QPushButton("Категории")
         self.cat_btn.setFixedHeight(30)
         self.cat_btn.setFixedWidth(120)
@@ -2221,7 +2249,7 @@ class NavBar(QWidget):
                 color: {Colors.PRIMARY_TEXT};
                 border: none;
                 border-radius: 8px;
-                font-size: 12px;
+                font-size: 13px;
             }}
             QPushButton:hover {{
                 background: {Colors.SEPARATOR};
