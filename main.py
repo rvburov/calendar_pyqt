@@ -1919,13 +1919,6 @@ class ListView(QWidget):
                 self._vbox.insertWidget(idx, row)
                 idx += 1
 
-            # Spacer between groups
-            spacer = QWidget()
-            spacer.setFixedHeight(4)
-            spacer.setStyleSheet(f"background: {Colors.BG};")  # или transparent
-            self._vbox.insertWidget(idx, spacer)
-            idx += 1
-
         # Добавляем принудительное обновление после добавления всех виджетов
         QTimer.singleShot(50, self._update_all_texts)
 
@@ -1948,7 +1941,7 @@ class ListView(QWidget):
         lbl = QLabel(label)
         color = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
         lbl.setStyleSheet(
-            f"color: {color}; font-size: 13px; font-weight: 700; background: transparent;"
+            f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
         )
         lay.addWidget(lbl)
         lay.addStretch()
@@ -2005,8 +1998,7 @@ class EventRowWidget(QWidget):
 
     def _build(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(24, 0, 24, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 0, 0, 0)
 
         # Колонка 0: Цветовая точка
         self.dot = QLabel()
@@ -2016,20 +2008,22 @@ class EventRowWidget(QWidget):
             f"{'opacity: 0.4;' if self.is_past else ''}"
         )
         layout.addWidget(self.dot, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(6)
 
         # Колонка 1: Время
         time_str = f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}"
         self.time_lbl = QLabel(time_str)
-        self.time_lbl.setFixedWidth(110)
+        self.time_lbl.setFixedWidth(85)
         alpha = Colors.SECONDARY_TEXT
-        self.time_lbl.setStyleSheet(f"color: {alpha}; font-size: 12px; background: transparent;")
+        self.time_lbl.setStyleSheet(f"color: {alpha}; font-size: 13px; background: transparent;")
         layout.addWidget(self.time_lbl, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(2)
 
         # Колонка 2: Название (растягивается)
         tc = Colors.SECONDARY_TEXT if self.is_past else Colors.PRIMARY_TEXT
         self.title_lbl = QLabel()
         self.title_lbl.setStyleSheet(
-            f"color: {tc}; font-size: 13px; font-weight: 600; background: transparent;"
+            f"color: {tc}; font-size: 13px; background: transparent;"
             + ("text-decoration: line-through;" if self.is_past else "")
         )
         self.title_lbl.setWordWrap(False)
