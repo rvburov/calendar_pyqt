@@ -803,7 +803,7 @@ class MonthView(QWidget):
             lbl = QLabel(d)
             lbl.setAlignment(Qt.AlignCenter)
             color = Colors.WEEKEND if i >= 5 else Colors.SECONDARY_TEXT
-            lbl.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600;")
+            lbl.setStyleSheet(f"color: {color}; font-size: 13px;")
             h_lay.addWidget(lbl, 0, i)
         layout.addWidget(header)
 
@@ -954,12 +954,12 @@ class DayCell(QWidget):
         font = QFont("Helvetica Neue", 10, QFont.DemiBold if self.is_today else QFont.Normal)
         p.setFont(font)
 
-        circle_size = 26
+        circle_size = 24
         circle_x = w - circle_size - 6
         circle_y = 6
 
         if self.is_today:
-            p.setBrush(QBrush(QColor(Colors.ACCENT)))
+            p.setBrush(QBrush(QColor(Colors.RED)))
             p.setPen(Qt.NoPen)
             p.drawEllipse(circle_x, circle_y, circle_size, circle_size)
             p.setPen(QColor(Colors.TODAY_TEXT))
@@ -976,26 +976,34 @@ class DayCell(QWidget):
         for i, ev in enumerate(self.events[:max_events]):
             if tag_y + tag_h > h - 4:
                 break
+            
             color = QColor(ev.color)
-            p.setBrush(QBrush(color))
+            
+            # Фон с прозрачностью
+            light = QColor(color)
+            light.setAlpha(40)
+            p.setBrush(QBrush(light))
             p.setPen(Qt.NoPen)
             path = QPainterPath()
             path.addRoundedRect(6, tag_y, w - 12, tag_h, 4, 4)
             p.drawPath(path)
-
-            # Event title с обрезкой текста
-            p.setPen(QColor("white"))
+            
+            # Левая цветная полоска
+            p.setBrush(QBrush(color))
+            p.drawRoundedRect(6, tag_y, 4, tag_h, 2, 2)
+            
+            # Текст
+            p.setPen(color.darker(140))
             f2 = QFont("Helvetica Neue", 10)
             p.setFont(f2)
             time_str = ev.start_dt.strftime("%H:%M")
             full_text = f"{time_str} {ev.title}"
             
-            # Обрезаем текст с многоточием
             font_metrics = QFontMetrics(f2)
-            available_width = w - 20  # Отступы слева и справа
+            available_width = w - 28
             elided_text = font_metrics.elidedText(full_text, Qt.ElideRight, available_width)
             
-            p.drawText(10, tag_y, w - 16, tag_h, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
+            p.drawText(14, tag_y, w - 20, tag_h, Qt.AlignVCenter | Qt.AlignLeft, elided_text)
             tag_y += tag_h + 2
 
         # "+N more"
@@ -2286,7 +2294,7 @@ class MainWindow(QMainWindow):
         self.db = DatabaseManager()
         self._seed_data_if_empty()
         self.setWindowTitle("Календарь")
-        self.setMinimumSize(900, 650)
+        self.setMinimumSize(900, 900)
         self._build_ui()
 
     def _build_ui(self):
