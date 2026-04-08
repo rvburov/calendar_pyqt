@@ -17,12 +17,13 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QMessageBox, QSpacerItem, QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import (
-    Qt, QDate, QTime, QDateTime, QTimer, QPoint, QRect, QSize, pyqtSignal
+    Qt, QDate, QTime, QDateTime, QTimer, QPoint, QRect, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, QPalette, QFontMetrics,
     QLinearGradient, QPainterPath, QPixmap, QIcon
 )
+                     
 
 # ─────────────────────────────────────────────
 # ЦВЕТА
@@ -1851,8 +1852,16 @@ class ListView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._first_show = True
         self._build_ui()
         self.refresh()
+
+    def showEvent(self, event):
+        """Вызывается при первом показе виджета"""
+        super().showEvent(event)
+        if self._first_show:
+            QTimer.singleShot(100, self.go_today)
+            self._first_show = False
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -1939,7 +1948,13 @@ class ListView(QWidget):
         lay = QHBoxLayout(w)
         lay.setContentsMargins(24, 0, 24, 0)
         lbl = QLabel(label)
-        color = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
+        # Определяем цвет в зависимости от текста заголовка
+        if label == "Сегодня":
+            color = Colors.RED  # Красный для "Сегодня"
+        elif is_past:
+            color = Colors.SECONDARY_TEXT  # Серый для прошедших дат
+        else:
+            color = Colors.PRIMARY_TEXT  # Обычный цвет для будущих дат
         lbl.setStyleSheet(
             f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;"
         )
@@ -1969,7 +1984,33 @@ class ListView(QWidget):
 
     def go_prev(self):  pass
     def go_next(self):  pass
-    def go_today(self): pass
+    def go_today(self):
+        """Плавно прокручивает список так, чтобы 'Сегодня' было в самом верху"""
+        today = date.today()
+        
+        # Ищем заголовок с сегодняшней датой
+        for i in range(self._vbox.count()):
+            item = self._vbox.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                # Проверяем, является ли виджет заголовком даты
+                if isinstance(widget, QWidget) and widget.findChild(QLabel):
+                    label = widget.findChild(QLabel)
+                    if label and label.text() == "Сегодня":
+                        # Получаем позицию виджета
+                        y_pos = widget.mapTo(self._content, QPoint(0, 0)).y()
+
+                        scrollbar = self.scroll.verticalScrollBar()
+                        animation = QPropertyAnimation(scrollbar, b"value")
+                        animation.setDuration(500)  # Длительность в миллисекундах
+                        animation.setStartValue(scrollbar.value())
+                        animation.setEndValue(y_pos)
+                        animation.setEasingCurve(QEasingCurve.OutCubic)  # Плавное замедление в конце
+                        animation.start()
+                        
+                        # Сохраняем ссылку на анимацию чтобы она не удалилась
+                        self._scroll_animation = animation
+                        return
     def header_text(self) -> str: return "Список событий"
 
 class EventRowWidget(QWidget):
