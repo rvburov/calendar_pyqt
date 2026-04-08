@@ -1867,7 +1867,7 @@ class ListView(QWidget):
         self._content = QWidget()
         self._content.setStyleSheet(f"background: {Colors.BG};")
         self._vbox = QVBoxLayout(self._content)
-        self._vbox.setContentsMargins(0, 8, 0, 8)
+        self._vbox.setContentsMargins(0, 0, 0, 0)
         self._vbox.setSpacing(0)
         self._vbox.addStretch()
 
@@ -1921,23 +1921,30 @@ class ListView(QWidget):
 
             # Spacer between groups
             spacer = QWidget()
-            spacer.setFixedHeight(8)
+            spacer.setFixedHeight(4)
+            spacer.setStyleSheet(f"background: {Colors.BG};")  # или transparent
             self._vbox.insertWidget(idx, spacer)
             idx += 1
+
+        # Добавляем принудительное обновление после добавления всех виджетов
+        QTimer.singleShot(50, self._update_all_texts)
+
+    def _update_all_texts(self):
+        """Обновляет тексты во всех строках событий"""
+        for child in self._content.findChildren(EventRowWidget):
+            child._update_elided_texts()
 
     def resizeEvent(self, event):
         """При изменении размера окна обновляем обрезку текста в строках"""
         super().resizeEvent(event)
-        # Обновляем все строки событий
-        for child in self._content.findChildren(EventRowWidget):
-            child._update_elided_texts()
+        self._update_all_texts()
 
     def _make_date_header(self, label: str, is_past: bool) -> QWidget:
         w = QWidget()
         w.setFixedHeight(36)
         w.setStyleSheet(f"background: {Colors.SECONDARY_BG};")
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(24, 8, 24, 4)
+        lay.setContentsMargins(24, 0, 24, 0)
         lbl = QLabel(label)
         color = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
         lbl.setStyleSheet(
@@ -1951,6 +1958,8 @@ class ListView(QWidget):
         w = EventRowWidget(ev, is_past)
         w.edit_requested.connect(self._on_edit)
         w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Убираем скругление у самого виджета
+        w.setStyleSheet("border-radius: 0px;")
         return w
 
     def _on_edit(self, ev: 'Event'):
@@ -1978,31 +1987,35 @@ class EventRowWidget(QWidget):
         super().__init__()
         self.ev = ev
         self.is_past = is_past
-        self.setFixedHeight(56)
+        self.setFixedHeight(36)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self._build()
-        self._update_elided_texts()
-    
+        # Устанавливаем атрибут для корректной работы стилей
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def showEvent(self, event):
+        """Когда виджет становится видимым, обновляем текст"""
+        super().showEvent(event)
+        QTimer.singleShot(10, self._update_elided_texts)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_elided_texts()
 
     def _build(self):
-        # Используем QGridLayout для фиксированных колонок
-        layout = QGridLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(12)
-        layout.setColumnStretch(3, 1)  # Колонка с текстом растягивается
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(24, 0, 24, 0)
+        layout.setSpacing(10)
 
         # Колонка 0: Цветовая точка
         self.dot = QLabel()
-        self.dot.setFixedSize(12, 12)
+        self.dot.setFixedSize(10, 10)
         self.dot.setStyleSheet(
-            f"background: {self.ev.color}; border-radius: 6px;"
+            f"background: {self.ev.color}; border-radius: 5px;"
             f"{'opacity: 0.4;' if self.is_past else ''}"
         )
-        layout.addWidget(self.dot, 0, 0, alignment=Qt.AlignVCenter)
+        layout.addWidget(self.dot, 0, alignment=Qt.AlignVCenter)
 
         # Колонка 1: Время
         time_str = f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}"
@@ -2010,15 +2023,9 @@ class EventRowWidget(QWidget):
         self.time_lbl.setFixedWidth(110)
         alpha = Colors.SECONDARY_TEXT
         self.time_lbl.setStyleSheet(f"color: {alpha}; font-size: 12px; background: transparent;")
-        layout.addWidget(self.time_lbl, 0, 1, alignment=Qt.AlignVCenter)
+        layout.addWidget(self.time_lbl, 0, alignment=Qt.AlignVCenter)
 
-        # Колонка 2: Название и описание (вертикальный контейнер)
-        text_widget = QWidget()
-        text_layout = QVBoxLayout(text_widget)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(4)
-        
-        # Название
+        # Колонка 2: Название (растягивается)
         tc = Colors.SECONDARY_TEXT if self.is_past else Colors.PRIMARY_TEXT
         self.title_lbl = QLabel()
         self.title_lbl.setStyleSheet(
@@ -2026,19 +2033,8 @@ class EventRowWidget(QWidget):
             + ("text-decoration: line-through;" if self.is_past else "")
         )
         self.title_lbl.setWordWrap(False)
-        text_layout.addWidget(self.title_lbl)
-        
-        # Описание
-        self.desc_lbl = QLabel()
-        self.desc_lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 11px; background: transparent;")
-        self.desc_lbl.setWordWrap(False)
-        
-        if self.ev.description:
-            text_layout.addWidget(self.desc_lbl)
-        else:
-            self.desc_lbl.hide()
-        
-        layout.addWidget(text_widget, 0, 2)
+        self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        layout.addWidget(self.title_lbl, 1)
 
         # Колонка 3: Иконка категории
         cat_map = {"Работа": "💼", "Личное": "🏠", "Важное": "⭐"}
@@ -2046,29 +2042,34 @@ class EventRowWidget(QWidget):
         self.badge.setFixedWidth(40)
         self.badge.setAlignment(Qt.AlignCenter)
         self.badge.setStyleSheet("font-size: 16px; background: transparent;")
-        layout.addWidget(self.badge, 0, 3, alignment=Qt.AlignVCenter)
+        layout.addWidget(self.badge, 0, alignment=Qt.AlignVCenter)
+
+        # Принудительно включаем прозрачный фон по умолчанию
+        self.setStyleSheet("background: transparent;")
 
     def _update_elided_texts(self):
-        """Обновляет тексты с обрезкой по ширине"""
-        # Получаем доступную ширину для текстовой колонки
-        # Общая ширина минус: точка(12+12) + время(110+12) + иконка(40+12) + отступы(24) = ~222
-        available_width = self.width() - 222
+        """Обновляет текст с обрезкой по ширине"""
+        if self.width() <= 0:
+            return
+        
+        available_width = self.width() - 214
         
         if available_width > 50:
-            # Обрезаем название
             font_metrics = QFontMetrics(self.title_lbl.font())
             self.title_lbl.setText(font_metrics.elidedText(self.ev.title, Qt.ElideRight, available_width))
-            
-            # Обрезаем описание
-            if self.ev.description and self.desc_lbl.isVisible():
-                desc_font_metrics = QFontMetrics(self.desc_lbl.font())
-                self.desc_lbl.setText(desc_font_metrics.elidedText(self.ev.description, Qt.ElideRight, available_width))
 
     def enterEvent(self, e):
+        """При наведении мыши - подсветка всей строки"""
         super().enterEvent(e)
-        self.setStyleSheet(f"background: {Colors.ACCENT_LIGHT}; border-radius: 8px;")
+        # Подсветка всей строки от левого до правого края
+        self.setStyleSheet(f"""
+            background: {Colors.ACCENT_LIGHT};
+            margin: 0px;
+            padding: 0px;
+        """)
 
     def leaveEvent(self, e):
+        """При уходе мыши - убираем подсветку"""
         super().leaveEvent(e)
         self.setStyleSheet("background: transparent;")
 
