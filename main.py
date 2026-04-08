@@ -793,7 +793,7 @@ class MonthView(QWidget):
 
         # Day-of-week headers
         header = QWidget()
-        header.setFixedHeight(36)
+        header.setFixedHeight(30)
         header.setStyleSheet(f"background: {Colors.SECONDARY_BG}; border-bottom: 1px solid {Colors.SEPARATOR};")
         h_lay = QGridLayout(header)
         h_lay.setContentsMargins(0, 0, 0, 0)
@@ -951,7 +951,7 @@ class DayCell(QWidget):
 
         # Day number
         day_str = str(self.cell_date.day)
-        font = QFont("Helvetica Neue", 13, QFont.DemiBold if self.is_today else QFont.Normal)
+        font = QFont("Helvetica Neue", 10, QFont.DemiBold if self.is_today else QFont.Normal)
         p.setFont(font)
 
         circle_size = 26
@@ -985,7 +985,7 @@ class DayCell(QWidget):
 
             # Event title с обрезкой текста
             p.setPen(QColor("white"))
-            f2 = QFont("Helvetica Neue", 13)
+            f2 = QFont("Helvetica Neue", 10)
             p.setFont(f2)
             time_str = ev.start_dt.strftime("%H:%M")
             full_text = f"{time_str} {ev.title}"
@@ -1002,7 +1002,7 @@ class DayCell(QWidget):
         remaining = len(self.events) - max_events
         if remaining > 0:
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f3 = QFont("Helvetica Neue", 13)
+            f3 = QFont("Helvetica Neue", 10)
             p.setFont(f3)
             p.drawText(6, tag_y, w - 12, 16, Qt.AlignVCenter | Qt.AlignLeft, f"+{remaining} ещё")
 
@@ -1376,7 +1376,7 @@ class WeekHeaderBar(QWidget):
         self.time_w  = time_w
         self.day_names = day_names
         self.days: List[date] = []
-        self.setFixedHeight(52)
+        self.setFixedHeight(30)
         self.setStyleSheet(f"background: {Colors.SECONDARY_BG}; border-bottom: 1px solid {Colors.SEPARATOR};")
 
     def set_days(self, days: List[date]):
@@ -1402,26 +1402,18 @@ class WeekHeaderBar(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(int(x), 0, int(x), self.height())
 
-            # weekday name
-            p.setPen(QColor(Colors.ACCENT if is_today else Colors.SECONDARY_TEXT))
-            f_name = QFont("Helvetica Neue", 13, QFont.DemiBold)
-            p.setFont(f_name)
-            p.drawText(int(x), 4, int(col_w), 18, Qt.AlignCenter, self.day_names[i])
-
-            # day number with circle for today
+            # День недели и число вместе
+            text = f"{self.day_names[i]} {d.day}"
+            
             if is_today:
-                cx = int(x + col_w / 2)
-                cy = 36
-                p.setBrush(QBrush(QColor(Colors.ACCENT)))
-                p.setPen(Qt.NoPen)
-                p.drawEllipse(cx - 14, cy - 14, 28, 28)
-                p.setPen(QColor("white"))
+                p.setPen(QColor(Colors.RED))
+                f = QFont("Helvetica Neue", 10, QFont.Normal)
             else:
-                p.setPen(QColor(Colors.PRIMARY_TEXT))
-
-            f_num = QFont("Helvetica Neue", 13, QFont.DemiBold if is_today else QFont.Normal)
-            p.setFont(f_num)
-            p.drawText(int(x), 22, int(col_w), 26, Qt.AlignCenter, str(d.day))
+                p.setPen(QColor(Colors.SECONDARY_TEXT))
+                f = QFont("Helvetica Neue", 10, QFont.Normal)
+            
+            p.setFont(f)
+            p.drawText(int(x), 0, int(col_w), self.height(), Qt.AlignCenter, text)
 
         p.end()
 
@@ -1478,7 +1470,7 @@ class WeekCanvas(QWidget):
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f = QFont("Helvetica Neue", 13)
+            f = QFont("Helvetica Neue", 10)
             p.setFont(f)
             p.drawText(0, y, self.TIME_W - 6, self.HOUR_H, Qt.AlignRight | Qt.AlignTop,
                        f"{hour:02d}:00")
@@ -1553,7 +1545,7 @@ class WeekCanvas(QWidget):
 
                     # Вместо текущего кода:
                     p.setPen(color.darker(140))
-                    f2 = QFont("Helvetica Neue", 13, QFont.DemiBold)
+                    f2 = QFont("Helvetica Neue", 10, QFont.Normal)
                     p.setFont(f2)
                     tr = rect.adjusted(8, 3, -3, -3)
                     time_s = f"{ev.start_dt.strftime('%H:%M')}"
@@ -1746,7 +1738,7 @@ class YearCanvas(QWidget):
             # Month name
             is_cur_month = (self.year == self.today.year and m + 1 == self.today.month)
             p.setPen(QColor(Colors.ACCENT if is_cur_month else Colors.PRIMARY_TEXT))
-            f_title = QFont("Helvetica Neue", 13, QFont.DemiBold)
+            f_title = QFont("Helvetica Neue", 10, QFont.DemiBold)
             p.setFont(f_title)
             p.drawText(mx + 10, my + 6, mw - 20, 22, Qt.AlignLeft | Qt.AlignVCenter,
                        YearView.MONTH_NAMES[m])
@@ -1757,7 +1749,7 @@ class YearCanvas(QWidget):
             day_cell_h = (mh - 34) / 7  # 6 week rows + header
 
             p.setPen(QColor(Colors.SECONDARY_TEXT))
-            f_hdr = QFont("Helvetica Neue", 8)
+            f_hdr = QFont("Helvetica Neue", 10)
             p.setFont(f_hdr)
             for di, dl in enumerate(self.DAY_LABELS):
                 dx = int(mx + di * day_cell_w)
@@ -1770,7 +1762,7 @@ class YearCanvas(QWidget):
             first = date(self.year, m + 1, 1)
             start_wd = first.weekday()  # 0=Mon
             grid_start = first - timedelta(days=start_wd)
-            f_day = QFont("Helvetica Neue", 9)
+            f_day = QFont("Helvetica Neue", 10)
             p.setFont(f_day)
 
             for di in range(42):
@@ -1923,7 +1915,7 @@ class ListView(QWidget):
 
     def _make_date_header(self, label: str, is_past: bool) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(36)
+        w.setFixedHeight(30)
         w.setStyleSheet(f"background: {Colors.SECONDARY_BG};")
         lay = QHBoxLayout(w)
         lay.setContentsMargins(24, 0, 24, 0)
@@ -2001,7 +1993,7 @@ class EventRowWidget(QWidget):
         super().__init__()
         self.ev = ev
         self.is_past = is_past
-        self.setFixedHeight(36)
+        self.setFixedHeight(30)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self._build()
@@ -2103,7 +2095,7 @@ class SegmentedControl(QWidget):
         super().__init__()
         self.labels = labels
         self.active = 3  # default = Month
-        self.setFixedHeight(32)
+        self.setFixedHeight(30)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -2432,7 +2424,7 @@ def main():
     app.setStyleSheet(APP_STYLE)
 
     # Smooth font rendering
-    font = QFont("Helvetica Neue", 13)
+    font = QFont("Helvetica Neue", 10)
     font.setStyleStrategy(QFont.PreferAntialias)
     app.setFont(font)
 
