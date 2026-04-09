@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from typing import Optional, List
+from collections import defaultdict
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QStackedWidget, QScrollArea,
@@ -1343,13 +1344,19 @@ class WeekView(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        # Убираем горизонтальный скроллбар
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         self._canvas = WeekCanvas(self.db, self.HOUR_H, self.TIME_W)
         self._canvas.event_clicked.connect(self._on_event_click)
         self._canvas.slot_double_clicked.connect(self._on_slot_dblclick)
+
+        # Синхронизируем ширину заголовка с шириной канваса
+        self._canvas.width_changed.connect(self._header_bar.set_canvas_width)
+
         scroll.setWidget(self._canvas)
         layout.addWidget(scroll, 1)
 
-        # scroll to 07:00
         QTimer.singleShot(120, lambda: scroll.verticalScrollBar().setValue(
             max(0, 7 * self.HOUR_H - 20)
         ))
@@ -1411,8 +1418,13 @@ class WeekHeaderBar(QWidget):
         self.time_w  = time_w
         self.day_names = day_names
         self.days: List[date] = []
+        self._canvas_width = 0
         self.setFixedHeight(30)
         self.setStyleSheet(f"background: {Colors.SECONDARY_BG}; border-bottom: 1px solid {Colors.SEPARATOR};")
+
+    def set_canvas_width(self, w: int):
+        self._canvas_width = w
+        self.update()
 
     def set_days(self, days: List[date]):
         self.days = days
@@ -1423,30 +1435,30 @@ class WeekHeaderBar(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        w = self.width()
+
+        # Используем ширину канваса если она известна, иначе свою
+        w = self._canvas_width if self._canvas_width > 0 else self.width()
+
         col_w = (w - self.time_w) / 5
         today = date.today()
 
-        p.fillRect(0, 0, w, self.height(), QColor(Colors.SECONDARY_BG))
+        p.fillRect(0, 0, self.width(), self.height(), QColor(Colors.SECONDARY_BG))
 
         for i, d in enumerate(self.days):
             x = self.time_w + i * col_w
             is_today = (d == today)
 
-            # vertical separator
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(int(x), 0, int(x), self.height())
 
-            # День недели и число вместе
             text = f"{self.day_names[i]} {d.day}"
-            
+
             if is_today:
                 p.setPen(QColor(Colors.RED))
-                f = QFont("Helvetica Neue", 10, QFont.Normal)
             else:
                 p.setPen(QColor(Colors.SECONDARY_TEXT))
-                f = QFont("Helvetica Neue", 10, QFont.Normal)
-            
+
+            f = QFont("Helvetica Neue", 10, QFont.Normal)
             p.setFont(f)
             p.drawText(int(x), 0, int(col_w), self.height(), Qt.AlignCenter, text)
 
@@ -1454,8 +1466,9 @@ class WeekHeaderBar(QWidget):
 
 class WeekCanvas(QWidget):
     """Рисуемая сетка рабочей недели"""
-    event_clicked       = pyqtSignal(object)   # Event
+    event_clicked       = pyqtSignal(object)
     slot_double_clicked = pyqtSignal(date, QTime)
+    width_changed       = pyqtSignal(int)
 
     def __init__(self, db, hour_h, time_w):
         super().__init__()
@@ -1633,6 +1646,7 @@ class WeekCanvas(QWidget):
     def resizeEvent(self, event):
         """При изменении размера окна перерисовываем"""
         self.update()
+        self.width_changed.emit(self.width())
         super().resizeEvent(event)
 
     def _group_overlapping_events(self, events):
@@ -1734,14 +1748,14 @@ class YearView(QWidget):
 class YearCanvas(QWidget):
     month_clicked = pyqtSignal(date)
 
-    COLS = 3
+    COLS = 4
     DAY_LABELS = ["П","В","С","Ч","П","С","В"]
     
     # ПАРАМЕТРЫ БЛОКОВ ГОДА
-    CARD_WIDTH = 220      # ШИРИНА КАРТОЧКИ МЕСЯЦА
-    CARD_HEIGHT = 200     # ВЫСОТА КАРТОЧКИ МЕСЯЦА
+    CARD_WIDTH = 220       # ШИРИНА КАРТОЧКИ МЕСЯЦА
+    CARD_HEIGHT = 200      # ВЫСОТА КАРТОЧКИ МЕСЯЦА
     GAP = 26               # РАССТОЯНИЕ МЕЖДУ МЕСЯЦАМИ
-    PAD = 20              # ОТСТУП ОТ КРАЁВ
+    PAD = 20               # ОТСТУП ОТ КРАЁВ
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1749,9 +1763,9 @@ class YearCanvas(QWidget):
         self.event_dates: set = set()
         self.today = date.today()
         self._month_rects: List[tuple] = []
-        
+        # 4 колонки × 3 строки = 12 месяцев
         total_width = self.PAD * 2 + self.COLS * self.CARD_WIDTH + (self.COLS - 1) * self.GAP
-        total_height = self.PAD * 2 + 4 * self.CARD_HEIGHT + 3 * self.GAP
+        total_height = self.PAD * 2 + 3 * self.CARD_HEIGHT + 2 * self.GAP
         self.setFixedSize(total_width, total_height)
 
     def set_data(self, year: int, event_dates: set, today: date):
@@ -1913,21 +1927,24 @@ class ListView(QWidget):
                 item.widget().deleteLater()
 
         events = self.db.get_all_events()
-        if not events:
-            lbl = QLabel("Нет событий.\nНажмите «+ Событие» чтобы добавить.")
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 13px; padding: 60px;")
-            self._vbox.insertWidget(0, lbl)
-            return
-
+        
         # Group by date
-        from collections import defaultdict
         groups: dict = defaultdict(list)
         for ev in events:
             groups[ev.start_dt.date()].append(ev)
 
         today = date.today()
         tomorrow = today + timedelta(days=1)
+        
+        # Гарантируем, что "Сегодня" всегда отображается
+        if today not in groups:
+            groups[today] = []
+        
+        # Если вообще нет событий, показываем только "Сегодня" с сообщением
+        if not events:
+            # Всё равно создаём заголовок "Сегодня"
+            pass  # groups уже содержит today = []
+        
         idx = 0
         for d in sorted(groups.keys()):
             evs = groups[d]
@@ -1945,10 +1962,17 @@ class ListView(QWidget):
             self._vbox.insertWidget(idx, header)
             idx += 1
 
-            for ev in evs:
-                row = self._make_event_row(ev, is_past)
-                self._vbox.insertWidget(idx, row)
+            # Если это сегодня и нет событий, показываем сообщение
+            if d == today and len(evs) == 0:
+                empty_lbl = QLabel("Нет событий на сегодня")
+                empty_lbl.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 12px; padding: 8px 24px; background: transparent;")
+                self._vbox.insertWidget(idx, empty_lbl)
                 idx += 1
+            else:
+                for ev in evs:
+                    row = self._make_event_row(ev, is_past)
+                    self._vbox.insertWidget(idx, row)
+                    idx += 1
 
         # Добавляем принудительное обновление после добавления всех виджетов
         QTimer.singleShot(50, self._update_all_texts)
@@ -2339,7 +2363,7 @@ class MainWindow(QMainWindow):
         self.db = DatabaseManager()
         self._seed_data_if_empty()
         self.setWindowTitle("Календарь")
-        self.setMinimumSize(900, 900)
+        self.setMinimumSize(1050, 850)
         self._build_ui()
 
     def _build_ui(self):
@@ -2485,7 +2509,27 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(APP_STYLE)
 
-    # Smooth font rendering
+    # Определяем базовый путь
+    if getattr(sys, 'frozen', False):
+        # Запущено как .exe (PyInstaller)
+        base_path = sys._MEIPASS
+    else:
+        # Запущено как .py скрипт
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # Путь к папке с иконками
+    icon_folder = os.path.join(base_path, "icon_windows")
+    
+    # Ищем иконку (можно .png или .ico)
+    icon_path = os.path.join(icon_folder, "icon.ico")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(icon_folder, "icon.ico")
+    
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+    else:
+        print(f"Иконка не найдена в {icon_folder}")
+
     font = QFont("Helvetica Neue", 10)
     font.setStyleStrategy(QFont.PreferAntialias)
     app.setFont(font)
