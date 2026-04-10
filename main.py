@@ -38,6 +38,8 @@ class Colors:
     RED           = "#FF3B30"
     GREEN         = "#34C759"
     HOVER         = "#E5E5EA"
+    WHITE         = "#FFFFFF"
+    ACTIVITY_BAR  = "#EBEBEB"
 
 
 # ─────────────────────────────────────────────
@@ -1755,7 +1757,7 @@ class YearCanvas(QWidget):
     CARD_WIDTH = 220       # ШИРИНА КАРТОЧКИ МЕСЯЦА
     CARD_HEIGHT = 200      # ВЫСОТА КАРТОЧКИ МЕСЯЦА
     GAP = 26               # РАССТОЯНИЕ МЕЖДУ МЕСЯЦАМИ
-    PAD = 20               # ОТСТУП ОТ КРАЁВ
+    PAD = 0                # ОТСТУП ОТ КРАЁВ
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2354,6 +2356,109 @@ class NavBar(QWidget):
         self.title_lbl.setText(text)
 
 # ─────────────────────────────────────────────
+# ACTIVITY BAR (аналог VS Code)
+# ─────────────────────────────────────────────
+
+class ActivityBar(QWidget):
+    section_changed = pyqtSignal(int)  # 0 = Календарь, 1 = Задачи
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedWidth(49)
+        self._active = 0
+
+        # Основной горизонтальный layout: панель + линия-разделитель
+        h_layout = QHBoxLayout(self)
+        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setSpacing(0)
+
+        # Внутренняя панель с кнопками
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {Colors.ACTIVITY_BAR};;")
+        inner.setFixedWidth(48)
+
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(4, 12, 4, 12)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignTop)
+
+        self._btns = []
+        icons = [("📅", "Календарь"), ("✅", "Задачи")]
+        for i, (icon, tip) in enumerate(icons):
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(40, 40)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda checked, idx=i: self._on_click(idx))
+            layout.addWidget(btn)
+            self._btns.append(btn)
+
+        layout.addStretch()
+
+        # Линия-разделитель справа (1px)
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setFixedWidth(1)
+        line.setStyleSheet("background: #C8C8C8; border: none;")
+
+        h_layout.addWidget(inner)
+        h_layout.addWidget(line)
+
+        self._update_styles()
+
+    def _on_click(self, idx: int):
+        self._active = idx
+        self._update_styles()
+        self.section_changed.emit(idx)
+
+    def _update_styles(self):
+        for i, btn in enumerate(self._btns):
+            if i == self._active:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {Colors.WHITE};
+                        color: {Colors.WHITE};
+                        border: none;
+                        border-radius: 4px;
+                        font-size: 18px;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent;
+                        color: {Colors.SECONDARY_TEXT};
+                        border: none;
+                        border-radius: 4px;
+                        font-size: 18px;
+                    }}
+                    QPushButton:hover {{
+                        background: {Colors.WHITE};
+                    }}
+                """)
+
+class TasksPlaceholder(QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+
+        lbl = QLabel("✅")
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet("font-size: 48px; background: transparent;")
+        layout.addWidget(lbl)
+
+        lbl2 = QLabel("Задачи")
+        lbl2.setAlignment(Qt.AlignCenter)
+        lbl2.setStyleSheet(f"color: {Colors.SECONDARY_TEXT}; font-size: 18px; background: transparent;")
+        layout.addWidget(lbl2)
+
+        lbl3 = QLabel("Раздел в разработке")
+        lbl3.setAlignment(Qt.AlignCenter)
+        lbl3.setStyleSheet(f"color: {Colors.SEPARATOR}; font-size: 13px; background: transparent;")
+        layout.addWidget(lbl3)
+
+# ─────────────────────────────────────────────
 # MAIN WINDOW
 # ─────────────────────────────────────────────
 
@@ -2362,32 +2467,48 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db = DatabaseManager()
         self._seed_data_if_empty()
-        self.setWindowTitle("Календарь")
-        self.setMinimumSize(1050, 850)
+        self.setWindowTitle("Планировщик")
+        self.setMinimumSize(1050, 780) # Ширина - высота
         self._build_ui()
 
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+
+        # Горизонтальный корень: ActivityBar слева + контент справа
+        h_root = QHBoxLayout(central)
+        h_root.setContentsMargins(0, 0, 0, 0)
+        h_root.setSpacing(0)
+
+        # Activity Bar
+        self.activity_bar = ActivityBar()
+        self.activity_bar.section_changed.connect(self._switch_section)
+        h_root.addWidget(self.activity_bar)
+
+        # Правая часть: всё остальное
+        right_widget = QWidget()
+        root = QVBoxLayout(right_widget)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        h_root.addWidget(right_widget, 1)
 
         # Top bar: segmented control
         top_bar = QWidget()
-        top_bar.setFixedHeight(52)
+        top_bar.setFixedHeight(42)
         top_bar.setStyleSheet(f"""
-            background: {Colors.BG};
-            border-bottom: 1px solid {Colors.SEPARATOR};
+            background: {Colors.ACTIVITY_BAR};
+            border-bottom: 1px solid #C8C8C8;
+            border-top: 1px solid #C8C8C8;
         """)
         tb_layout = QHBoxLayout(top_bar)
-        tb_layout.setContentsMargins(16, 0, 16, 10)
+        tb_layout.setContentsMargins(16, 4, 16, 4)
         self.segmented = SegmentedControl(["Список", "День", "Неделя", "Месяц", "Год"])
         self.segmented.tab_changed.connect(self._switch_view)
         tb_layout.addStretch()
         tb_layout.addWidget(self.segmented)
         tb_layout.addStretch()
         root.addWidget(top_bar)
+        self.top_bar = top_bar
 
         # Nav bar
         self.navbar = NavBar()
@@ -2398,7 +2519,15 @@ class MainWindow(QMainWindow):
         self.navbar.manage_categories.connect(self._manage_categories)
         root.addWidget(self.navbar)
 
-        # Stacked views
+        # Секции: Календарь и Задачи
+        self.section_stack = QStackedWidget()
+
+        # Секция 0 — Календарь (stacked views)
+        calendar_widget = QWidget()
+        cal_layout = QVBoxLayout(calendar_widget)
+        cal_layout.setContentsMargins(0, 0, 0, 0)
+        cal_layout.setSpacing(0)
+
         self.stack = QStackedWidget()
         self.list_view  = ListView(self.db)
         self.day_view   = DayView(self.db)
@@ -2412,9 +2541,17 @@ class MainWindow(QMainWindow):
 
         self.month_view.day_clicked.connect(self._on_day_clicked)
         self.year_view.month_selected.connect(self._on_month_selected)
-        root.addWidget(self.stack, 1)
+        cal_layout.addWidget(self.stack, 1)
 
-        # Default: Month view (index 3)
+        self.section_stack.addWidget(calendar_widget)
+
+        # Секция 1 — Задачи (заглушка)
+        self.tasks_placeholder = TasksPlaceholder()
+        self.section_stack.addWidget(self.tasks_placeholder)
+
+        root.addWidget(self.section_stack, 1)
+
+        # Default: Month view
         self.stack.setCurrentIndex(3)
         self._update_title()
 
@@ -2424,6 +2561,12 @@ class MainWindow(QMainWindow):
     def _switch_view(self, idx: int):
         self.stack.setCurrentIndex(idx)
         self._update_title()
+
+    def _switch_section(self, idx: int):
+        self.section_stack.setCurrentIndex(idx)
+        is_calendar = (idx == 0)
+        self.top_bar.setVisible(is_calendar)
+        self.navbar.setVisible(is_calendar)
 
     def _update_title(self):
         v = self._current_view()
