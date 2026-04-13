@@ -12,11 +12,11 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     Qt, QDate, QTime, QTimer, QPoint, QRect, pyqtSignal,
-    QPropertyAnimation, QEasingCurve, QMimeData
+    QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, QFontMetrics,
-    QPainterPath, QPixmap, QIcon, QDrag
+    QPainterPath, QPixmap, QIcon
 )
 
 from core.styles import Colors
@@ -1219,29 +1219,35 @@ class DayCanvas(QWidget):
 
 class WeekView(QWidget):
     event_changed = pyqtSignal()
-    HOUR_H = 56; TIME_W = 52
+    HOUR_H = 56
+    TIME_W = 52
     DAY_NAMES = ["Пн","Вт","Ср","Чт","Пт"]
 
     def __init__(self, db):
         super().__init__()
         self.db = db
         self.current_date = date.today()
-        self._build_ui(); self.refresh()
+        self._build_ui()
+        self.refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._canvas.update)
         self._timer.start(60000)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self._header_bar = WeekHeaderBar(self.HOUR_H, self.TIME_W, self.DAY_NAMES)
         layout.addWidget(self._header_bar)
         scroll = QScrollArea()
-        scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._canvas = WeekCanvas(self.db, self.HOUR_H, self.TIME_W)
         self._canvas.event_clicked.connect(self._on_event_click)
         self._canvas.slot_double_clicked.connect(self._on_slot_dblclick)
+        self._canvas.event_moved.connect(self._on_event_moved)      # ДОБАВИТЬ
+        self._canvas.event_resized.connect(self._on_event_resized)  # ДОБАВИТЬ
         self._canvas.width_changed.connect(self._header_bar.set_canvas_width)
         scroll.setWidget(self._canvas)
         layout.addWidget(scroll, 1)
@@ -1252,20 +1258,37 @@ class WeekView(QWidget):
     def _on_event_click(self, ev):
         dlg = EventDialog(self, db=self.db, event=ev)
         result = dlg.exec_()
-        if result == QDialog.Accepted: db_update_event(self.db, dlg.result_event)
-        elif result == 2:              db_delete_event(self.db, ev.id)
+        if result == QDialog.Accepted:
+            db_update_event(self.db, dlg.result_event)
+        elif result == 2:
+            db_delete_event(self.db, ev.id)
         if result in (QDialog.Accepted, 2):
-            self.refresh(); self.event_changed.emit()
+            self.refresh()
+            self.event_changed.emit()
+
+    def _on_event_moved(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+        """Обработчик перемещения события"""
+        # Сохраняем дату (она уже обновлена в canvas)
+        db_update_event(self.db, event)
+        self.refresh()
+        self.event_changed.emit()
+
+    def _on_event_resized(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+        """Обработчик изменения размера события"""
+        db_update_event(self.db, event)
+        self.refresh()
+        self.event_changed.emit()
 
     def _on_slot_dblclick(self, d, t):
         dlg = EventDialog(self, db=self.db, preset_date=d, preset_time=t)
         if dlg.exec_() == QDialog.Accepted:
             db_add_event(self.db, dlg.result_event)
-            self.refresh(); self.event_changed.emit()
+            self.refresh()
+            self.event_changed.emit()
 
     def refresh(self):
         monday = self.current_date - timedelta(days=self.current_date.weekday())
-        days   = [monday + timedelta(days=i) for i in range(5)]
+        days = [monday + timedelta(days=i) for i in range(5)]
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(days[0], datetime.min.time()),
@@ -1274,9 +1297,17 @@ class WeekView(QWidget):
         self._header_bar.set_days(days)
         self._canvas.set_data(days, events)
 
-    def go_prev(self): self.current_date -= timedelta(weeks=1); self.refresh()
-    def go_next(self): self.current_date += timedelta(weeks=1); self.refresh()
-    def go_today(self): self.current_date = date.today(); self.refresh()
+    def go_prev(self):
+        self.current_date -= timedelta(weeks=1)
+        self.refresh()
+        
+    def go_next(self):
+        self.current_date += timedelta(weeks=1)
+        self.refresh()
+        
+    def go_today(self):
+        self.current_date = date.today()
+        self.refresh()
 
     def header_text(self) -> str:
         monday = self.current_date - timedelta(days=self.current_date.weekday())
@@ -1324,39 +1355,325 @@ class WeekHeaderBar(QWidget):
 class WeekCanvas(QWidget):
     event_clicked       = pyqtSignal(object)
     slot_double_clicked = pyqtSignal(date, QTime)
+    event_moved         = pyqtSignal(object, QTime, QTime)
+    event_resized       = pyqtSignal(object, QTime, QTime)
     width_changed       = pyqtSignal(int)
+    RESIZE_MARGIN = 10
 
     def __init__(self, db, hour_h, time_w):
         super().__init__()
-        self.db = db; self.HOUR_H = hour_h; self.TIME_W = time_w
-        self.days = []; self.events = []; self._event_rects = []
+        self.db = db
+        self.HOUR_H = hour_h
+        self.TIME_W = time_w
+        self.days = []
+        self.events = []
+        self._event_rects = []
         self.setMinimumHeight(24 * hour_h)
+        self.setMouseTracking(True)
+        
+        # Для перемещения
+        self.dragging_event = None
+        self.drag_start_y = None
+        self.drag_start_x = None
+        self.drag_original_start = None
+        self.drag_original_end = None
+        self.drag_original_day = None
+        self.drag_original_start_minutes = None
+        self.drag_current_day = None
+        
+        # Для изменения размера
+        self.resizing_event = None
+        self.resizing_edge = None
+        self.resize_start_y = None
+        self.resize_original_start = None
+        self.resize_original_end = None
+        
+        # Выделенное событие
+        self.selected_event = None
+        self.hover_edge = None
 
     def set_data(self, days, events):
-        self.days = days; self.events = events
-        self._event_rects = []; self.update()
+        self.days = days
+        self.events = events
+        self._event_rects = []
+        self.selected_event = None
+        self.hover_edge = None
+        self.update()
+
+    def _get_event_at_pos(self, pos):
+        """Найти событие по позиции мыши"""
+        for rect, ev in self._event_rects:
+            if rect.contains(pos):
+                return rect, ev
+        return None, None
+
+    def _get_resize_edge(self, rect, pos):
+        """Определить, за какой край потянули"""
+        if abs(pos.y() - rect.y()) <= self.RESIZE_MARGIN:
+            return 'top'
+        if abs(pos.y() - (rect.y() + rect.height())) <= self.RESIZE_MARGIN:
+            return 'bottom'
+        return None
+
+    def _get_day_and_minutes_from_pos(self, pos):
+        """Получить день и минуты по позиции мыши"""
+        if not self.days:
+            return None, None
+        
+        col_w = (self.width() - self.TIME_W) / 5
+        col = int((pos.x() - self.TIME_W) / col_w)
+        
+        if 0 <= col < len(self.days):
+            y = pos.y()
+            minutes = int(y / self.HOUR_H * 60)
+            minutes = max(0, min(minutes, 23 * 60 + 45))  # Ограничиваем 00:00 - 23:45
+            minutes = (minutes // 15) * 15  # округляем до 15 минут
+            return self.days[col], minutes
+        return None, None
+
+    def _update_event_position(self, event, new_day, new_start_minutes):
+        """Обновить позицию события на новый день и время"""
+        duration = (event.end_dt - event.start_dt).seconds // 60
+        new_hour = new_start_minutes // 60
+        new_minute = new_start_minutes % 60
+        
+        new_start_dt = datetime(
+            new_day.year, new_day.month, new_day.day,
+            new_hour, new_minute
+        )
+        new_end_dt = new_start_dt + timedelta(minutes=duration)
+        
+        # Проверяем границы дня (06:00 - 23:59)
+        if new_start_dt.hour >= 6 and new_end_dt <= datetime(
+            new_day.year, new_day.month, new_day.day, 23, 59
+        ):
+            event.start_dt = new_start_dt
+            event.end_dt = new_end_dt
+            self.update()
+            return True
+        return False
+
+    def _get_col_from_x(self, x):
+        """Получить индекс колонки по X координате"""
+        if not self.days:
+            return -1
+        col_w = (self.width() - self.TIME_W) / 5
+        col = int((x - self.TIME_W) / col_w)
+        if 0 <= col < len(self.days):
+            return col
+        return -1
+
+    def mouseMoveEvent(self, e):
+        # Обновляем курсор при наведении на края
+        rect, ev = self._get_event_at_pos(e.pos())
+        
+        if rect and ev and not self.dragging_event:
+            edge = self._get_resize_edge(rect, e.pos())
+            if edge == 'top' or edge == 'bottom':
+                self.setCursor(Qt.SizeVerCursor)
+                self.hover_edge = edge
+            else:
+                self.setCursor(Qt.ArrowCursor)
+                self.hover_edge = None
+        elif not self.dragging_event:
+            self.setCursor(Qt.ArrowCursor)
+            self.hover_edge = None
+        
+        # Обработка изменения размера
+        if self.resizing_event and self.resize_start_y is not None:
+            delta_y = e.pos().y() - self.resize_start_y
+            delta_minutes = int(delta_y / self.HOUR_H * 60)
+            
+            if self.resizing_edge == 'top':
+                new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
+                if new_start < self.resize_original_end - timedelta(minutes=15):
+                    new_start = new_start.replace(minute=(new_start.minute // 15) * 15)
+                    self.resizing_event.start_dt = new_start
+                    self.update()
+            elif self.resizing_edge == 'bottom':
+                new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
+                if new_end > self.resize_original_start + timedelta(minutes=15):
+                    new_end = new_end.replace(minute=(new_end.minute // 15) * 15)
+                    self.resizing_event.end_dt = new_end
+                    self.update()
+        
+        # Обработка перемещения (между днями и по времени)
+        elif self.dragging_event and self.drag_start_y is not None:
+            # Получаем текущую позицию мыши
+            current_x = e.pos().x()
+            current_y = e.pos().y()
+            
+            # Определяем текущий день под мышью
+            current_col = self._get_col_from_x(current_x)
+            
+            if current_col >= 0:
+                self.drag_current_day = self.days[current_col]
+                
+                # Вычисляем смещение по Y
+                delta_y = current_y - self.drag_start_y
+                delta_minutes = int(delta_y / self.HOUR_H * 60)
+                
+                # Новая позиция в минутах
+                new_start_minutes = self.drag_original_start_minutes + delta_minutes
+                
+                # Обновляем позицию события
+                self._update_event_position(
+                    self.dragging_event, 
+                    self.drag_current_day, 
+                    new_start_minutes
+                )
+        
+        # Показываем подсказку при перетаскивании между днями
+        if self.dragging_event:
+            self.update()  # Обновляем для визуальной обратной связи
+            
+        super().mouseMoveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            rect, ev = self._get_event_at_pos(e.pos())
+            
+            if rect and ev:
+                edge = self._get_resize_edge(rect, e.pos())
+                
+                if edge:
+                    # Начинаем изменение размера
+                    self.resizing_event = ev
+                    self.resizing_edge = edge
+                    self.resize_start_y = e.pos().y()
+                    self.resize_original_start = ev.start_dt
+                    self.resize_original_end = ev.end_dt
+                    self.selected_event = ev
+                    self.update()
+                    return
+                else:
+                    # Начинаем перемещение
+                    self.dragging_event = ev
+                    self.drag_start_y = e.pos().y()
+                    self.drag_start_x = e.pos().x()
+                    self.drag_original_start = ev.start_dt
+                    self.drag_original_end = ev.end_dt
+                    self.drag_original_day = ev.start_dt.date()
+                    self.drag_original_start_minutes = ev.start_dt.hour * 60 + ev.start_dt.minute
+                    self.drag_current_day = ev.start_dt.date()
+                    self.selected_event = ev
+                    self.update()
+                    return
+            
+            # Снимаем выделение
+            if self.selected_event:
+                self.selected_event = None
+                self.update()
+        
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        # Сохраняем изменения после перемещения
+        if self.dragging_event and self.drag_start_y is not None:
+            # Проверяем, изменилась ли позиция
+            if (self.dragging_event.start_dt != self.drag_original_start or 
+                self.dragging_event.end_dt != self.drag_original_end):
+                self.event_moved.emit(
+                    self.dragging_event,
+                    self.dragging_event.start_dt.time(),
+                    self.dragging_event.end_dt.time()
+                )
+        
+        # Сохраняем изменения после изменения размера
+        if self.resizing_event and self.resize_start_y is not None:
+            if (self.resizing_event.start_dt != self.resize_original_start or 
+                self.resizing_event.end_dt != self.resize_original_end):
+                self.event_resized.emit(
+                    self.resizing_event,
+                    self.resizing_event.start_dt.time(),
+                    self.resizing_event.end_dt.time()
+                )
+        
+        # Сбрасываем все состояния
+        self.dragging_event = None
+        self.drag_start_y = None
+        self.drag_start_x = None
+        self.drag_original_start = None
+        self.drag_original_end = None
+        self.drag_original_day = None
+        self.drag_original_start_minutes = None
+        self.drag_current_day = None
+        self.resizing_event = None
+        self.resizing_edge = None
+        self.resize_start_y = None
+        self.resize_original_start = None
+        self.resize_original_end = None
+        
+        super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
-        if not self.days: return
-        for rect, ev in self._event_rects:
-            if rect.contains(e.pos()):
-                self.event_clicked.emit(ev); return
-        col_w = (self.width() - self.TIME_W) / 5
-        col   = int((e.pos().x() - self.TIME_W) / col_w)
-        if 0 <= col < 5:
-            y = e.pos().y()
-            self.slot_double_clicked.emit(
-                self.days[col],
-                QTime(min(y // self.HOUR_H, 23),
-                      ((y % self.HOUR_H) * 60 // self.HOUR_H // 15) * 15)
-            )
+        rect, ev = self._get_event_at_pos(e.pos())
+        if rect and ev:
+            self.event_clicked.emit(ev)
+            return
+        
+        day, minutes = self._get_day_and_minutes_from_pos(e.pos())
+        if day and minutes is not None:
+            hour = minutes // 60
+            minute = minutes % 60
+            self.slot_double_clicked.emit(day, QTime(hour, minute))
+
+    def _draw_block(self, p, rect, color, ev, gsz):
+        # Проверяем, выделено ли событие или перетаскивается
+        is_selected = (self.selected_event and self.selected_event.id == ev.id)
+        is_dragging = (self.dragging_event and self.dragging_event.id == ev.id)
+        
+        # Рисуем фон
+        if is_selected or is_dragging:
+            light = QColor(color)
+            light.setAlpha(80 if is_dragging else 60)  # Более яркий при перетаскивании
+            p.setBrush(QBrush(light))
+            p.setPen(QPen(color, 2))
+        else:
+            light = QColor(color)
+            light.setAlpha(25)
+            p.setBrush(QBrush(light))
+            p.setPen(Qt.NoPen)
+        
+        path = QPainterPath()
+        path.addRoundedRect(rect.x(), rect.y(), rect.width(), rect.height(), 5, 5)
+        p.drawPath(path)
+        
+        # Цветная полоска слева
+        p.setBrush(QBrush(color))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(rect.x(), rect.y(), 4, rect.height(), 2, 2)
+        
+        # Рисуем текст
+        p.setPen(color.darker(140))
+        f2 = QFont("Helvetica Neue", 10)
+        p.setFont(f2)
+        fm = QFontMetrics(f2)
+        avail = rect.width() - 11
+        tr = rect.adjusted(8, 3, -3, -3)
+        time_s = ev.start_dt.strftime('%H:%M')
+        if rect.height() > 28:
+            title = fm.elidedText(ev.title, Qt.ElideRight, avail) if gsz <= 2 \
+                    else (ev.title[:10] + "..." if len(ev.title) > 10 else ev.title)
+            p.drawText(tr, Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
+                       f"{title}\n{time_s}")
+        else:
+            p.drawText(tr, Qt.AlignVCenter | Qt.AlignLeft,
+                       fm.elidedText(f"{ev.title} {time_s}", Qt.ElideRight, avail))
 
     def paintEvent(self, e):
-        if not self.days: return
-        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-        w     = self.width(); col_w = (w - self.TIME_W) / 5; today = date.today()
+        if not self.days:
+            return
+        
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self.width()
+        col_w = (w - self.TIME_W) / 5
+        today = date.today()
+        
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # Рисуем сетку
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
@@ -1368,13 +1685,17 @@ class WeekCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w, y + self.HOUR_H // 2)
 
+        # Рисуем вертикальные линии и подсветку текущего дня
         for i, d in enumerate(self.days):
             x = int(self.TIME_W + i * col_w)
+            # УБРАНО: подсветка дня при перетаскивании
+            # Оставляем только подсветку текущего дня (сегодня)
             if d == today:
                 p.fillRect(x, 0, int(col_w), self.height(), QColor(Colors.ACCENT_LIGHT))
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(x, 0, x, self.height())
 
+        # Рисуем события
         self._event_rects = []
         by_day = {d: [] for d in self.days}
         for ev in self.events:
@@ -1382,65 +1703,52 @@ class WeekCanvas(QWidget):
                 by_day[ev.start_dt.date()].append(ev)
 
         for col, day in enumerate(self.days):
-            if not by_day[day]: continue
-            x  = int(self.TIME_W + col * col_w) + 3
+            if not by_day[day]:
+                continue
+            x = int(self.TIME_W + col * col_w) + 3
             cw = int(col_w) - 6
             for group in self._group_overlapping(by_day[day]):
                 seg = cw // len(group)
                 for idx, ev in enumerate(group):
-                    y1 = ev.start_dt.hour*self.HOUR_H + ev.start_dt.minute*self.HOUR_H//60
-                    y2 = ev.end_dt.hour  *self.HOUR_H + ev.end_dt.minute  *self.HOUR_H//60
-                    if y2 <= y1: y2 = y1 + self.HOUR_H // 2
-                    rect = QRect(x + idx*seg, y1+1, seg-2, y2-y1-2)
+                    y1 = ev.start_dt.hour * self.HOUR_H + ev.start_dt.minute * self.HOUR_H // 60
+                    y2 = ev.end_dt.hour * self.HOUR_H + ev.end_dt.minute * self.HOUR_H // 60
+                    if y2 <= y1:
+                        y2 = y1 + self.HOUR_H // 2
+                    rect = QRect(x + idx * seg, y1 + 1, seg - 2, y2 - y1 - 2)
                     self._draw_block(p, rect, QColor(ev.color), ev, len(group))
                     self._event_rects.append((rect, ev))
 
+        # Рисуем текущее время
         if today in self.days:
             now = datetime.now()
-            ny  = now.hour*self.HOUR_H + now.minute*self.HOUR_H//60
+            ny = now.hour * self.HOUR_H + now.minute * self.HOUR_H // 60
             col = self.days.index(today)
-            lx  = int(self.TIME_W + col*col_w)
-            rx  = int(self.TIME_W + (col+1)*col_w)
+            lx = int(self.TIME_W + col * col_w)
+            rx = int(self.TIME_W + (col + 1) * col_w)
             p.setPen(QPen(QColor(Colors.RED), 2))
             p.drawLine(lx, ny, rx, ny)
-            p.setBrush(QBrush(QColor(Colors.RED))); p.setPen(Qt.NoPen)
-            p.drawEllipse(lx-4, ny-4, 8, 8)
+            p.setBrush(QBrush(QColor(Colors.RED)))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(lx - 4, ny - 4, 8, 8)
         p.end()
 
-    def _draw_block(self, p, rect, color, ev, gsz):
-        light = QColor(color); light.setAlpha(25)
-        p.setBrush(QBrush(light)); p.setPen(Qt.NoPen)
-        path = QPainterPath()
-        path.addRoundedRect(rect.x(), rect.y(), rect.width(), rect.height(), 5, 5)
-        p.drawPath(path)
-        p.setBrush(QBrush(color))
-        p.drawRoundedRect(rect.x(), rect.y(), 4, rect.height(), 2, 2)
-        p.setPen(color.darker(140))
-        f2 = QFont("Helvetica Neue", 10); p.setFont(f2)
-        fm = QFontMetrics(f2); avail = rect.width() - 11
-        tr = rect.adjusted(8, 3, -3, -3)
-        time_s = ev.start_dt.strftime('%H:%M')
-        if rect.height() > 28:
-            title = fm.elidedText(ev.title, Qt.ElideRight, avail) if gsz <= 2 \
-                    else (ev.title[:10]+"..." if len(ev.title)>10 else ev.title)
-            p.drawText(tr, Qt.AlignTop|Qt.AlignLeft|Qt.TextWordWrap, f"{title}\n{time_s}")
-        else:
-            p.drawText(tr, Qt.AlignVCenter|Qt.AlignLeft,
-                       fm.elidedText(f"{ev.title} {time_s}", Qt.ElideRight, avail))
-
     def _group_overlapping(self, events):
-        if not events: return []
+        if not events:
+            return []
         evs = sorted(events, key=lambda e: (e.start_dt, e.end_dt))
         groups, cur = [], [evs[0]]
         for ev in evs[1:]:
             if any(not (ev.start_dt >= g.end_dt or ev.end_dt <= g.start_dt) for g in cur):
                 cur.append(ev)
             else:
-                groups.append(cur); cur = [ev]
-        groups.append(cur); return groups
+                groups.append(cur)
+                cur = [ev]
+        groups.append(cur)
+        return groups
 
     def resizeEvent(self, e):
-        self.update(); self.width_changed.emit(self.width())
+        self.update()
+        self.width_changed.emit(self.width())
         super().resizeEvent(e)
 
 
