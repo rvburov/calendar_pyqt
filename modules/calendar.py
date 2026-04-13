@@ -406,8 +406,8 @@ class EventDialog(QDialog):
             return
         d, st, et = self.date_edit.date(), self.start_time.time(), self.end_time.time()
         if et <= st:
-            QMessageBox.warning(self, "Ошибка", "Время конца должно быть позже начала")
-            return
+            et = QTime(st.hour() + 1, st.minute())
+        
         self.result_event = Event(
             id=self.event.id if self.event else None,
             title=title,
@@ -954,13 +954,15 @@ class DayCanvas(QWidget):
 
     def _get_minutes_from_y(self, y):
         """Получить количество минут от начала дня по Y координате"""
-        return int(y / self.HOUR_H * 60)
+        minutes = int(y / self.HOUR_H * 60)
+        # Убираем ограничения - теперь можно любое время от 00:00 до 23:59
+        return max(0, min(minutes, 23 * 60 + 59))
 
     def _update_event_position(self, event, new_start_minutes):
         """Обновить позицию события"""
         duration = (event.end_dt - event.start_dt).seconds // 60
         new_hour = new_start_minutes // 60
-        new_minute = (new_start_minutes % 60) // 15 * 15  # Округляем до 15 минут
+        new_minute = new_start_minutes % 60
         
         new_start_dt = datetime(
             self.current_date.year, self.current_date.month, self.current_date.day,
@@ -968,15 +970,11 @@ class DayCanvas(QWidget):
         )
         new_end_dt = new_start_dt + timedelta(minutes=duration)
         
-        # Проверяем границы (06:00 - 23:59)
-        if new_start_dt.hour >= 6 and new_end_dt <= datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day, 23, 59
-        ):
-            event.start_dt = new_start_dt
-            event.end_dt = new_end_dt
-            self.update()
-            return True
-        return False
+        # Убираем проверку границ - разрешаем любое время
+        event.start_dt = new_start_dt
+        event.end_dt = new_end_dt
+        self.update()
+        return True
 
     def mouseMoveEvent(self, e):
         # Обновляем курсор при наведении на края
@@ -1014,12 +1012,14 @@ class DayCanvas(QWidget):
                     self.resizing_event.end_dt = new_end
                     self.update()
         
-        # Обработка перемещения (без отделения от окна)
+        # Обработка перемещения
         elif self.dragging_event and self.drag_start_y is not None:
             delta_y = e.pos().y() - self.drag_start_y
             delta_minutes = int(delta_y / self.HOUR_H * 60)
             
             new_start_minutes = self.drag_original_start_minutes + delta_minutes
+            # Ограничиваем только границами дня (00:00 - 23:59)
+            new_start_minutes = max(0, min(new_start_minutes, 23 * 60 + 59))
             self._update_event_position(self.dragging_event, new_start_minutes)
             
         else:
@@ -1103,10 +1103,8 @@ class DayCanvas(QWidget):
             self.event_clicked.emit(ev)
             return
         y = e.pos().y()
-        self.double_clicked_time.emit(QTime(
-            min(y // self.HOUR_H, 23),
-            ((y % self.HOUR_H) * 60 // self.HOUR_H // 15) * 15
-        ))
+        minutes = self._get_minutes_from_y(y)
+        self.double_clicked_time.emit(QTime(minutes // 60, minutes % 60))
 
     def _draw_block(self, p, rect, color, ev, gsz):
         # Проверяем, выделено ли событие
@@ -1416,7 +1414,7 @@ class WeekCanvas(QWidget):
         return None
 
     def _get_day_and_minutes_from_pos(self, pos):
-        """Получить день и минуты по позиции мыши"""
+        """Получить день и минуты по позиции мыши (без ограничений)"""
         if not self.days:
             return None, None
         
@@ -1426,13 +1424,14 @@ class WeekCanvas(QWidget):
         if 0 <= col < len(self.days):
             y = pos.y()
             minutes = int(y / self.HOUR_H * 60)
-            minutes = max(0, min(minutes, 23 * 60 + 45))  # Ограничиваем 00:00 - 23:45
+            # Убираем ограничения - разрешаем любое время от 00:00 до 23:59
+            minutes = max(0, min(minutes, 23 * 60 + 59))
             minutes = (minutes // 15) * 15  # округляем до 15 минут
             return self.days[col], minutes
         return None, None
 
     def _update_event_position(self, event, new_day, new_start_minutes):
-        """Обновить позицию события на новый день и время"""
+        """Обновить позицию события на новый день и время (без ограничений)"""
         duration = (event.end_dt - event.start_dt).seconds // 60
         new_hour = new_start_minutes // 60
         new_minute = new_start_minutes % 60
@@ -1443,15 +1442,11 @@ class WeekCanvas(QWidget):
         )
         new_end_dt = new_start_dt + timedelta(minutes=duration)
         
-        # Проверяем границы дня (06:00 - 23:59)
-        if new_start_dt.hour >= 6 and new_end_dt <= datetime(
-            new_day.year, new_day.month, new_day.day, 23, 59
-        ):
-            event.start_dt = new_start_dt
-            event.end_dt = new_end_dt
-            self.update()
-            return True
-        return False
+        # Убираем все проверки границ
+        event.start_dt = new_start_dt
+        event.end_dt = new_end_dt
+        self.update()
+        return True
 
     def _get_col_from_x(self, x):
         """Получить индекс колонки по X координате"""
