@@ -38,8 +38,11 @@ class MainWindow(QMainWindow):
         self.section_stack.setCurrentIndex(idx)
 
     def _load_icon(self):
-        base = sys._MEIPASS if getattr(sys, "frozen", False) else \
-               os.path.dirname(os.path.abspath(__file__))
-        icon_path = os.path.join(base, "icon_windows", "icon.ico")
+        if getattr(sys, "frozen", False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        icon_path = os.path.join(base, "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))

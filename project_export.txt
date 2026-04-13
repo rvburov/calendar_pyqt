@@ -1,3 +1,404 @@
+Структура проекта
+==================================================
+calendar_pyqt
+├── build
+│   └── Календарь
+│       ├── Analysis-00.toc
+│       ├── base_library.zip
+│       ├── EXE-00.toc
+│       ├── localpycs
+│       │   ├── pyimod01_archive.pyc
+│       │   ├── pyimod02_importers.pyc
+│       │   ├── pyimod03_ctypes.pyc
+│       │   ├── pyimod04_pywin32.pyc
+│       │   └── struct.pyc
+│       ├── PKG-00.toc
+│       ├── PYZ-00.pyz
+│       ├── PYZ-00.toc
+│       ├── warn-Календарь.txt
+│       ├── xref-Календарь.html
+│       └── Календарь.pkg
+├── core
+│   ├── __init__.py
+│   ├── calendar.db
+│   ├── database.py
+│   └── styles.py
+├── dist
+│   └── Календарь.exe
+├── docs
+│   ├── DEVELOPER_GUIDE.md
+│   ├── ROADMAP.md
+│   └── USER_GUIDE.md
+├── export_code.py
+├── icon.ico
+├── main.py
+├── modules
+│   ├── __init__.py
+│   ├── calendar.py
+│   └── tasks.py
+├── README.md
+├── requirements.txt
+├── setup.py
+├── ui
+│   ├── __init__.py
+│   ├── activity_bar.py
+│   └── main_window.py
+└── Календарь.spec
+
+==================================================
+Содержимое файлов
+==================================================
+
+core\database.py
+import sys
+import os
+import sqlite3
+from typing import Optional, List
+
+
+class Category:
+    def __init__(self, name: str, color: str, id: Optional[int] = None):
+        self.id = id
+        self.name = name
+        self.color = color
+
+
+class CategoryManager:
+    PREDEFINED_COLORS = [
+        ("#007AFF", "Синий"),
+        ("#34C759", "Зеленый"),
+        ("#FF3B30", "Красный"),
+        ("#FF9500", "Оранжевый"),
+        ("#FF2D55", "Розовый"),
+        ("#AF52DE", "Фиолетовый"),
+        ("#FFCC00", "Желтый"),
+        ("#5E5CE6", "Индиго"),
+        ("#64D2FF", "Голубой"),
+        ("#FF6B6B", "Коралловый"),
+    ]
+
+    def __init__(self, db_conn):
+        self.conn = db_conn
+        self._create_table()
+        self._ensure_default_categories()
+
+    def _create_table(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                name  TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL
+            )
+        """)
+        self.conn.commit()
+
+    def _ensure_default_categories(self):
+        for name, color in [("Работа","#007AFF"),("Личное","#34C759"),("Важное","#FF3B30")]:
+            if not self.conn.execute("SELECT id FROM categories WHERE name=?", (name,)).fetchone():
+                self.add_category(name, color)
+
+    def add_category(self, name: str, color: str) -> Optional["Category"]:
+        try:
+            cur = self.conn.execute(
+                "INSERT INTO categories (name, color) VALUES (?,?)", (name, color)
+            )
+            self.conn.commit()
+            return Category(name, color, cur.lastrowid)
+        except sqlite3.IntegrityError:
+            return None
+
+    def update_category(self, cat_id: int, name: str, color: str) -> bool:
+        try:
+            self.conn.execute(
+                "UPDATE categories SET name=?, color=? WHERE id=?", (name, color, cat_id)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def delete_category(self, cat_id: int):
+        personal = self.conn.execute(
+            "SELECT id FROM categories WHERE name='Личное'"
+        ).fetchone()
+        if personal:
+            self.conn.execute(
+                "UPDATE events SET category=? WHERE category=?", (personal[0], cat_id)
+            )
+        self.conn.execute("DELETE FROM categories WHERE id=?", (cat_id,))
+        self.conn.commit()
+
+    def get_all_categories(self) -> List["Category"]:
+        cur = self.conn.execute("SELECT id, name, color FROM categories ORDER BY name")
+        return [Category(name, color, id) for id, name, color in cur.fetchall()]
+
+    def get_category_by_id(self, cat_id: int) -> Optional["Category"]:
+        row = self.conn.execute(
+            "SELECT id, name, color FROM categories WHERE id=?", (cat_id,)
+        ).fetchone()
+        return Category(row[1], row[2], row[0]) if row else None
+
+    def get_category_by_name(self, name: str) -> Optional["Category"]:
+        row = self.conn.execute(
+            "SELECT id, name, color FROM categories WHERE name=?", (name,)
+        ).fetchone()
+        return Category(row[1], row[2], row[0]) if row else None
+
+
+class DatabaseManager:
+    def __init__(self):
+        if getattr(sys, "frozen", False):
+            app_data = os.path.join(
+                os.environ.get("APPDATA", os.path.expanduser("~")), "MyPlanner"
+            )
+        else:
+            app_data = os.path.dirname(os.path.abspath(__file__))
+
+        os.makedirs(app_data, exist_ok=True)
+        self.conn = sqlite3.connect(os.path.join(app_data, "calendar.db"))
+        self._create_events_table()
+        self.category_manager = CategoryManager(self.conn)
+
+    def _create_events_table(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                start_dt    TEXT NOT NULL,
+                end_dt      TEXT NOT NULL,
+                category    INTEGER DEFAULT 1
+            )
+        """)
+        self.conn.commit()
+
+core\styles.py
+class Colors:
+    BG             = "#FFFFFF"
+    SECONDARY_BG   = "#F2F2F7"
+    SEPARATOR      = "#E5E5EA"
+    PRIMARY_TEXT   = "#1C1C1E"
+    SECONDARY_TEXT = "#8E8E93"
+    ACCENT         = "#007AFF"
+    ACCENT_LIGHT   = "#E5F0FF"
+    TODAY_TEXT     = "#FFFFFF"
+    WEEKEND        = "#8E8E93"
+    RED            = "#FF3B30"
+    GREEN          = "#34C759"
+    HOVER          = "#E5E5EA"
+    WHITE          = "#FFFFFF"
+    ACTIVITY_BAR   = "#EBEBEB"
+
+
+APP_STYLE = f"""
+QMainWindow, QWidget {{
+    background-color: {Colors.BG};
+    color: {Colors.PRIMARY_TEXT};
+    font-family: "Helvetica Neue", "Arial", sans-serif;
+    font-size: 13px;
+}}
+QScrollBar:vertical {{
+    background: {Colors.SECONDARY_BG};
+    width: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical {{
+    background: {Colors.SEPARATOR};
+    border-radius: 4px;
+    min-height: 30px;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+QScrollBar:horizontal {{
+    background: {Colors.SECONDARY_BG};
+    height: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {Colors.SEPARATOR};
+    border-radius: 4px;
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+"""
+
+export_code.py
+import os
+import sys
+from pathlib import Path
+
+def get_folder_structure(directory, exclude_dirs=None):
+    """
+    Рекурсивно строит структуру папок и файлов, исключая указанные директории
+    Возвращает строку с древовидной структурой
+    """
+    if exclude_dirs is None:
+        exclude_dirs = ['venv', '__pycache__', '.git', 'node_modules', '.idea', '.vscode']
+    
+    directory = Path(directory)
+    structure = []
+    
+    def build_tree(current_path, prefix=""):
+        items = []
+        try:
+            for item in sorted(current_path.iterdir()):
+                # Пропускаем исключенные директории
+                if item.is_dir() and item.name in exclude_dirs:
+                    continue
+                # Пропускаем скрытые файлы/папки (опционально)
+                if item.name.startswith('.'):
+                    continue
+                items.append(item)
+        except PermissionError:
+            return
+        
+        for i, item in enumerate(items):
+            is_last = i == len(items) - 1
+            current_prefix = "└── " if is_last else "├── "
+            structure.append(f"{prefix}{current_prefix}{item.name}")
+            
+            if item.is_dir():
+                extension = "    " if is_last else "│   "
+                build_tree(item, prefix + extension)
+    
+    structure.append(directory.name)
+    build_tree(directory)
+    return "\n".join(structure)
+
+def collect_py_files(directory, exclude_dirs=None):
+    """
+    Рекурсивно собирает все .py файлы, исключая __init__.py и исключенные директории
+    Возвращает список путей относительно корневой директории
+    """
+    if exclude_dirs is None:
+        exclude_dirs = ['venv', '__pycache__', '.git', 'node_modules', '.idea', '.vscode']
+    
+    py_files = []
+    directory = Path(directory)
+    
+    for root, dirs, files in os.walk(directory):
+        # Модифицируем dirs на месте, чтобы os.walk не заходил в исключенные папки
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        
+        for file in files:
+            if file.endswith('.py') and file != '__init__.py':
+                full_path = Path(root) / file
+                relative_path = full_path.relative_to(directory)
+                py_files.append(relative_path)
+    
+    return sorted(py_files, key=lambda p: str(p))
+
+def read_file_content(file_path):
+    """
+    Читает содержимое файла, обрабатывая возможные ошибки кодировки
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except UnicodeDecodeError:
+        try:
+            with open(file_path, 'r', encoding='cp1251') as f:
+                return f.read()
+        except:
+            return f"# [Ошибка: не удалось прочитать файл]"
+    except Exception as e:
+        return f"# [Ошибка: {str(e)}]"
+
+def generate_output(project_dir, output_file='project_export.txt'):
+    """
+    Генерирует выходной .txt файл со структурой проекта и всеми .py файлами (кроме __init__.py)
+    """
+    project_path = Path(project_dir)
+    
+    if not project_path.exists():
+        print(f"Ошибка: Директория '{project_dir}' не существует!")
+        return False
+    
+    # Получаем структуру проекта
+    print("Формируем структуру проекта...")
+    structure = get_folder_structure(project_path)
+    
+    # Собираем все .py файлы
+    print("Собираем .py файлы...")
+    py_files = collect_py_files(project_path)
+    
+    if not py_files:
+        print("Не найдено .py файлов (исключая __init__.py)")
+        return False
+    
+    # Записываем в выходной файл
+    with open(output_file, 'w', encoding='utf-8') as out:
+        # Записываем заголовок и структуру
+        out.write("Структура проекта\n")
+        out.write("=" * 50 + "\n")
+        out.write(structure)
+        out.write("\n\n")
+        out.write("=" * 50 + "\n")
+        out.write("Содержимое файлов\n")
+        out.write("=" * 50 + "\n\n")
+        
+        # Записываем содержимое каждого файла
+        for rel_path in py_files:
+            full_path = project_path / rel_path
+            
+            # Записываем путь к файлу
+            out.write(f"{rel_path}\n")
+            
+            # Записываем содержимое файла
+            content = read_file_content(full_path)
+            out.write(content)
+            
+            # Добавляем пустую строку между файлами
+            if not content.endswith('\n'):
+                out.write('\n')
+            out.write('\n')
+    
+    print(f"Готово! Создан файл '{output_file}'")
+    print(f"Обработано файлов: {len(py_files)}")
+    print(f"Исключены папки: venv, __pycache__, .git и др.")
+    return True
+
+def main():
+    # Если передан аргумент командной строки - используем его как путь к проекту
+    # Иначе используем текущую директорию
+    if len(sys.argv) > 1:
+        project_dir = sys.argv[1]
+    else:
+        project_dir = os.getcwd()
+    
+    print(f"Сканируем директорию: {project_dir}")
+    generate_output(project_dir)
+
+if __name__ == "__main__":
+    main()
+
+main.py
+import sys
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QFont
+
+from core.database import DatabaseManager
+from core.styles import APP_STYLE
+from ui.main_window import MainWindow
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(APP_STYLE)
+
+    font = QFont("Helvetica Neue", 10)
+    font.setStyleStrategy(QFont.PreferAntialias)
+    app.setFont(font)
+
+    db = DatabaseManager()
+    window = MainWindow(db)
+    window.show()
+
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
+
+modules\calendar.py
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
@@ -574,7 +975,6 @@ class NavBar(QWidget):
 
 class DayCell(QWidget):
     double_clicked = pyqtSignal(date)
-    clicked = pyqtSignal(date)
     event_changed  = pyqtSignal()
 
     def __init__(self, db):
@@ -597,18 +997,8 @@ class DayCell(QWidget):
         self.is_weekend = is_weekend
         self.update()
 
-    def enterEvent(self, e): 
-        self._hovered = True
-        self.update()
-        
-    def leaveEvent(self, e): 
-        self._hovered = False
-        self.update()
-    
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and self.cell_date:
-            self.clicked.emit(self.cell_date)
-        super().mousePressEvent(e)
+    def enterEvent(self, e): self._hovered = True;  self.update()
+    def leaveEvent(self, e): self._hovered = False; self.update()
 
     def mouseDoubleClickEvent(self, e):
         if self.cell_date:
@@ -724,7 +1114,6 @@ class MonthView(QWidget):
             for col in range(7):
                 cell = DayCell(self.db)
                 cell.double_clicked.connect(self._on_cell_dblclick)
-                cell.clicked.connect(self._on_cell_click)
                 cell.event_changed.connect(self.event_changed)
                 self.grid.addWidget(cell, row, col)
                 row_cells.append(cell)
@@ -736,9 +1125,6 @@ class MonthView(QWidget):
             db_add_event(self.db, dlg.result_event)
             self.refresh()
             self.event_changed.emit()
-
-    def _on_cell_click(self, d: date):
-        self.day_clicked.emit(d)
 
     def refresh(self):
         today = date.today()
@@ -1569,3 +1955,195 @@ class CalendarModule(QWidget):
                   "Работа"),
         ]:
             db_add_event(self.db, ev)
+
+modules\tasks.py
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtCore import Qt
+from core.database import DatabaseManager
+from core.styles import Colors
+
+
+class TasksModule(QWidget):
+    def __init__(self, db: DatabaseManager):
+        super().__init__()
+        self.db = db
+        self._create_table()
+        self._build_ui()
+
+    def _create_table(self):
+        self.db.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                title       TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                due_date    TEXT,
+                priority    TEXT DEFAULT 'normal',
+                status      TEXT DEFAULT 'todo',
+                category    INTEGER DEFAULT 1,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        self.db.conn.commit()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+
+        for text, size, color in [
+            ("✅", 48, Colors.SECONDARY_TEXT),
+            ("Задачи", 18, Colors.SECONDARY_TEXT),
+            ("Раздел в разработке", 13, Colors.SEPARATOR),
+        ]:
+            lbl = QLabel(text)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet(
+                f"color: {color}; font-size: {size}px; background: transparent;"
+            )
+            layout.addWidget(lbl)
+
+setup.py
+import sys
+from PyInstaller.__main__ import run
+
+if __name__ == '__main__':
+    opts = [
+        'main.py',                                            # основной файл
+        '--name=Календарь',                                   # имя exe файла
+        '--icon=icon.ico',                                    # иконка для exe
+        '--windowed',                                         # без консоли
+        '--onefile',                                          # один exe файл
+        '--add-data=icon.ico;.',                              # добавить иконку в корень сборки
+        '--hidden-import=sqlite3',                            # поддержка SQLite
+        '--clean',                                            # очистка временных файлов
+        '--noconfirm',                                        # автоматическое подтверждение
+    ]
+    
+    # Автоматическая замена разделителя для Linux/Mac (на Windows не меняем)
+    if sys.platform != 'win32':
+        for i, opt in enumerate(opts):
+            if ';' in opt:
+                opts[i] = opt.replace(';', ':')
+    
+    run(opts)
+
+ui\activity_bar.py
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame
+from PyQt5.QtCore import Qt, pyqtSignal
+from core.styles import Colors
+
+
+class ActivityBar(QWidget):
+    section_changed = pyqtSignal(int)
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedWidth(49)
+        self._active = 0
+
+        h_layout = QHBoxLayout(self)
+        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setSpacing(0)
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {Colors.ACTIVITY_BAR};")
+        inner.setFixedWidth(48)
+
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(4, 12, 4, 12)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignTop)
+
+        self._btns = []
+        for i, (icon, tip) in enumerate([("📅", "Календарь"), ("✅", "Задачи")]):
+            btn = QPushButton(icon)
+            btn.setToolTip(tip)
+            btn.setFixedSize(40, 40)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda checked, idx=i: self._on_click(idx))
+            layout.addWidget(btn)
+            self._btns.append(btn)
+
+        layout.addStretch()
+
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setFixedWidth(1)
+        line.setStyleSheet("background: #C8C8C8; border: none;")
+
+        h_layout.addWidget(inner)
+        h_layout.addWidget(line)
+        self._update_styles()
+
+    def _on_click(self, idx: int):
+        self._active = idx
+        self._update_styles()
+        self.section_changed.emit(idx)
+
+    def _update_styles(self):
+        for i, btn in enumerate(self._btns):
+            if i == self._active:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: {Colors.WHITE}; border: none;
+                        border-radius: 4px; font-size: 18px;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent; border: none;
+                        border-radius: 4px; font-size: 18px;
+                    }}
+                    QPushButton:hover {{ background: {Colors.WHITE}; }}
+                """)
+
+ui\main_window.py
+import os, sys
+from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QStackedWidget
+from PyQt5.QtGui import QIcon
+
+from core.database import DatabaseManager
+from ui.activity_bar import ActivityBar
+from modules.calendar import CalendarModule
+from modules.tasks import TasksModule
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, db: DatabaseManager):
+        super().__init__()
+        self.db = db
+        self.setWindowTitle("Планировщик")
+        self.setMinimumSize(1050, 780)
+        self._build_ui()
+        self._load_icon()
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        h_root = QHBoxLayout(central)
+        h_root.setContentsMargins(0, 0, 0, 0)
+        h_root.setSpacing(0)
+
+        self.activity_bar = ActivityBar()
+        self.activity_bar.section_changed.connect(self._switch_section)
+        h_root.addWidget(self.activity_bar)
+
+        self.section_stack = QStackedWidget()
+        self.section_stack.addWidget(CalendarModule(self.db))
+        self.section_stack.addWidget(TasksModule(self.db))
+        h_root.addWidget(self.section_stack, 1)
+
+    def _switch_section(self, idx: int):
+        self.section_stack.setCurrentIndex(idx)
+
+    def _load_icon(self):
+        if getattr(sys, "frozen", False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        icon_path = os.path.join(base, "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
