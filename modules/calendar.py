@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import (
-    Qt, QDate, QTime, QTimer, QPoint, QRect, pyqtSignal,
+    Qt, QDate, QTime, QTimer, QPoint, QRect, QSize, pyqtSignal,
     QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
@@ -2014,50 +2014,61 @@ class YearCanvas(QWidget):
 # LIST VIEW
 # ─────────────────────────────────────────────
 
+class ElidedLabel(QLabel):
+    """QLabel, который всегда обрезает текст многоточием по своей ширине.
+    minimumSizeHint возвращает нулевую ширину — layout может свободно сжимать
+    виджет, а обрезка происходит в paintEvent с актуальной шириной."""
+
+    def minimumSizeHint(self):
+        h = super().minimumSizeHint().height()
+        return QSize(0, h)
+
+    def sizeHint(self):
+        h = super().sizeHint().height()
+        return QSize(0, h)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        fm = QFontMetrics(self.font())
+        elided = fm.elidedText(self.text(), Qt.ElideRight, self.width() - 16)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        p.setFont(self.font())
+        p.drawText(self.rect(), Qt.AlignVCenter | Qt.AlignLeft, elided)
+        p.end()
+
+
 class EventRowWidget(QWidget):
     edit_requested = pyqtSignal(object)
 
     def __init__(self, ev, is_past):
         super().__init__()
-        self.ev=ev; self.is_past=is_past
+        self.ev = ev
         self.setFixedHeight(30)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._build()
+        self._build(is_past)
 
-    def _build(self):
-        layout = QHBoxLayout(self); layout.setContentsMargins(24,0,0,0)
-        dot = QLabel(); dot.setFixedSize(10,10)
+    def _build(self, is_past):
+        layout = QHBoxLayout(self); layout.setContentsMargins(24, 0, 0, 0)
+        dot = QLabel(); dot.setFixedSize(10, 10)
         dot.setStyleSheet(f"background:{self.ev.color}; border-radius:5px;")
-        layout.addWidget(dot, 0, alignment=Qt.AlignVCenter); layout.addSpacing(6)
+        layout.addWidget(dot, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(6)
         tl = QLabel(f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}")
         tl.setFixedWidth(85)
         tl.setStyleSheet(f"color:{Colors.SECONDARY_TEXT}; font-size:13px; background:transparent;")
-        layout.addWidget(tl, 0, alignment=Qt.AlignVCenter); layout.addSpacing(2)
-        tc = Colors.SECONDARY_TEXT if self.is_past else Colors.PRIMARY_TEXT
-        self.title_lbl = QLabel()
+        layout.addWidget(tl, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(2)
+        tc = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
+        self.title_lbl = ElidedLabel(self.ev.title)
         self.title_lbl.setStyleSheet(
             f"color:{tc}; font-size:13px; background:transparent;"
-            + ("text-decoration:line-through;" if self.is_past else "")
+            + ("text-decoration:line-through;" if is_past else "")
         )
         self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout.addWidget(self.title_lbl, 1)
-        badge = QLabel({"Работа":"💼","Личное":"🏠","Важное":"⭐"}.get(self.ev.category,"📌"))
-        badge.setFixedWidth(40); badge.setAlignment(Qt.AlignCenter)
-        badge.setStyleSheet("font-size:16px; background:transparent;")
-        layout.addWidget(badge, 0, alignment=Qt.AlignVCenter)
         self.setStyleSheet("background:transparent;")
-
-    def showEvent(self, e): super().showEvent(e); QTimer.singleShot(10, self._update_text)
-    def resizeEvent(self, e): super().resizeEvent(e); self._update_text()
-
-    def _update_text(self):
-        if self.width() <= 0: return
-        avail = self.width() - 214
-        if avail > 50:
-            fm = QFontMetrics(self.title_lbl.font())
-            self.title_lbl.setText(fm.elidedText(self.ev.title, Qt.ElideRight, avail))
 
     def enterEvent(self, e): super().enterEvent(e); self.setStyleSheet(f"background:{Colors.ACCENT_LIGHT};")
     def leaveEvent(self, e): super().leaveEvent(e); self.setStyleSheet("background:transparent;")
@@ -2121,7 +2132,6 @@ class ListView(QWidget):
                     row = EventRowWidget(ev, is_past)
                     row.edit_requested.connect(self._on_edit)
                     self._vbox.insertWidget(idx, row); idx+=1
-        QTimer.singleShot(50, self._update_all_texts)
 
     def _make_header(self, label, is_past):
         w = QWidget(); w.setFixedHeight(30)
@@ -2132,12 +2142,6 @@ class ListView(QWidget):
         lbl.setStyleSheet(f"color:{color}; font-size:13px; font-weight:600; background:transparent;")
         lay.addWidget(lbl); lay.addStretch()
         return w
-
-    def _update_all_texts(self):
-        for child in self._content.findChildren(EventRowWidget):
-            child._update_text()
-
-    def resizeEvent(self, e): super().resizeEvent(e); self._update_all_texts()
 
     def _on_edit(self, ev):
         dlg = EventDialog(self, db=self.db, event=ev)
