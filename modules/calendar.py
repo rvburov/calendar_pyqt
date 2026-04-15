@@ -1045,26 +1045,55 @@ class DayCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут
+                # Округляем до 15 минут с проверкой границ
                 minutes = new_start.minute
                 rounded_minutes = round(minutes / 15) * 15
+                
                 if rounded_minutes >= 60:
-                    new_start = new_start.replace(hour=new_start.hour + 1, minute=0)
+                    new_start = new_start + timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
+                elif rounded_minutes < 0:
+                    new_start = new_start - timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
                 else:
                     new_start = new_start.replace(minute=rounded_minutes)
+                
+                # Проверяем границы: не раньше 00:00 и не позже конца - 15 минут
+                min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
+                max_start = self.resize_original_end - timedelta(minutes=15)
+                
+                if new_start < min_start:
+                    new_start = min_start
+                if new_start > max_start:
+                    new_start = max_start
                 
                 if new_start < self.resize_original_end - timedelta(minutes=15):
                     self.resizing_event.start_dt = new_start
                     self.update()
+                    
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут
+                # Округляем до 15 минут с проверкой границ
                 minutes = new_end.minute
                 rounded_minutes = round(minutes / 15) * 15
+                
                 if rounded_minutes >= 60:
-                    new_end = new_end.replace(hour=new_end.hour + 1, minute=0)
+                    new_end = new_end + timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
+                elif rounded_minutes < 0:
+                    new_end = new_end - timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
                 else:
                     new_end = new_end.replace(minute=rounded_minutes)
+                
+                # Проверяем границы: не позже 23:59 и не раньше начала + 15 минут
+                max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
+                min_end = self.resize_original_start + timedelta(minutes=15)
+                
+                if new_end > max_end:
+                    new_end = max_end
+                if new_end < min_end:
+                    new_end = min_end
                 
                 if new_end > self.resize_original_start + timedelta(minutes=15):
                     self.resizing_event.end_dt = new_end
@@ -1591,26 +1620,55 @@ class WeekCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут
+                # Округляем до 15 минут с проверкой границ
                 minutes = new_start.minute
                 rounded_minutes = round(minutes / 15) * 15
+                
                 if rounded_minutes >= 60:
-                    new_start = new_start.replace(hour=new_start.hour + 1, minute=0)
+                    new_start = new_start + timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
+                elif rounded_minutes < 0:
+                    new_start = new_start - timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
                 else:
                     new_start = new_start.replace(minute=rounded_minutes)
+                
+                # Проверяем границы: не раньше 00:00 и не позже конца - 15 минут
+                min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
+                max_start = self.resize_original_end - timedelta(minutes=15)
+                
+                if new_start < min_start:
+                    new_start = min_start
+                if new_start > max_start:
+                    new_start = max_start
                 
                 if new_start < self.resize_original_end - timedelta(minutes=15):
                     self.resizing_event.start_dt = new_start
                     self.update()
+                    
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут
+                # Округляем до 15 минут с проверкой границ
                 minutes = new_end.minute
                 rounded_minutes = round(minutes / 15) * 15
+                
                 if rounded_minutes >= 60:
-                    new_end = new_end.replace(hour=new_end.hour + 1, minute=0)
+                    new_end = new_end + timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
+                elif rounded_minutes < 0:
+                    new_end = new_end - timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
                 else:
                     new_end = new_end.replace(minute=rounded_minutes)
+                
+                # Проверяем границы: не позже 23:59 и не раньше начала + 15 минут
+                max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
+                min_end = self.resize_original_start + timedelta(minutes=15)
+                
+                if new_end > max_end:
+                    new_end = max_end
+                if new_end < min_end:
+                    new_end = min_end
                 
                 if new_end > self.resize_original_start + timedelta(minutes=15):
                     self.resizing_event.end_dt = new_end
