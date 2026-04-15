@@ -935,72 +935,56 @@ class DayCanvas(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
-        self.events: List[Event] = []
+        self.events: List[Event] = []  # Оригинальные события
         self._event_rects: List[tuple] = []
         self.setMinimumHeight(24 * self.HOUR_H)
+        self.setMouseTracking(True)
         
+        # Для перемещения
         self.dragging_event = None
         self.drag_start_y = None
         self.drag_original_start_minutes = None
         self.drag_original_start = None
         self.drag_original_end = None
         
+        # Для изменения размера
         self.resizing_event = None
         self.resizing_edge = None
         self.resize_start_y = None
         self.resize_original_start = None
         self.resize_original_end = None
         
+        # Выделенное событие
         self.selected_event = None
         self.hover_edge = None
-        self.setMouseTracking(True)
 
     def set_data(self, d, events):
         self.current_date = d
-        filtered_events = []
-        self.event_originals = {}
-        
-        for ev in events:
-            if ev.start_dt.date() <= d <= ev.end_dt.date():
-                # Создаем копию для отображения
-                ev_copy = Event(
-                    id=ev.id,
-                    title=ev.title,
-                    description=ev.description,
-                    start_dt=ev.start_dt,
-                    end_dt=ev.end_dt,
-                    category=ev.category,
-                    category_id=ev.category_id
-                )
-                ev_copy._db = self.db
-                
-                if d > ev.start_dt.date():
-                    ev_copy.start_dt = datetime(d.year, d.month, d.day, 0, 0)
-                else:
-                    ev_copy.start_dt = ev.start_dt
-                    
-                if d < ev.end_dt.date():
-                    ev_copy.end_dt = datetime(d.year, d.month, d.day, 23, 59)
-                else:
-                    ev_copy.end_dt = ev.end_dt
-                
-                filtered_events.append(ev_copy)
-                key = (d, ev.id)
-                self.event_originals[key] = ev
-        
-        self.events = filtered_events
+        self.events = events  # Сохраняем оригинальные события
         self._event_rects = []
         self.selected_event = None
         self.hover_edge = None
         self.update()
 
+    def _get_display_time(self, ev, day):
+        """Получить время отображения события для конкретного дня"""
+        if day == ev.start_dt.date():
+            start_time = ev.start_dt
+        else:
+            start_time = datetime(day.year, day.month, day.day, 0, 0)
+        
+        if day == ev.end_dt.date():
+            end_time = ev.end_dt
+        else:
+            end_time = datetime(day.year, day.month, day.day, 23, 59)
+        
+        return start_time, end_time
+
     def _get_event_at_pos(self, pos):
-        """Найти событие по позиции мыши и вернуть оригинал"""
+        """Найти событие по позиции мыши"""
         for rect, ev in self._event_rects:
             if rect.contains(pos):
-                key = (self.current_date, ev.id)
-                original = self.event_originals.get(key, ev)
-                return rect, original
+                return rect, ev
         return None, None
 
     def _get_resize_edge(self, rect, pos):
@@ -1152,10 +1136,11 @@ class DayCanvas(QWidget):
 
     def _draw_block(self, p, rect, color, ev, gsz):
         is_selected = (self.selected_event and self.selected_event.id == ev.id)
+        is_dragging = (self.dragging_event and self.dragging_event.id == ev.id)
         
-        if is_selected:
+        if is_selected or is_dragging:
             light = QColor(color)
-            light.setAlpha(60)
+            light.setAlpha(80 if is_dragging else 60)
             p.setBrush(QBrush(light))
             p.setPen(QPen(color, 2))
         else:
@@ -1194,6 +1179,7 @@ class DayCanvas(QWidget):
         w = self.width()
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # Рисуем сетку времени
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
@@ -1205,20 +1191,32 @@ class DayCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w - self.PAD_R, y + self.HOUR_H // 2)
 
+        # Фильтруем события для текущего дня
+        day_events = []
+        for ev in self.events:
+            if ev.start_dt.date() <= self.current_date <= ev.end_dt.date():
+                day_events.append(ev)
+
+        # Рисуем события
         self._event_rects = []
         x = self.TIME_W + 3
         cw = w - self.TIME_W - self.PAD_R - 6
-        for group in self._group_overlapping(self.events):
+        
+        # Сортируем и группируем
+        day_events.sort(key=lambda e: (e.start_dt, e.end_dt))
+        for group in self._group_overlapping(day_events):
             seg = cw // len(group)
             for idx, ev in enumerate(group):
-                y1 = ev.start_dt.hour * self.HOUR_H + ev.start_dt.minute * self.HOUR_H // 60
-                y2 = ev.end_dt.hour * self.HOUR_H + ev.end_dt.minute * self.HOUR_H // 60
+                start_time, end_time = self._get_display_time(ev, self.current_date)
+                y1 = start_time.hour * self.HOUR_H + start_time.minute * self.HOUR_H // 60
+                y2 = end_time.hour * self.HOUR_H + end_time.minute * self.HOUR_H // 60
                 if y2 <= y1:
                     y2 = y1 + self.HOUR_H // 2
                 rect = QRect(x + idx * seg, y1 + 1, seg - 2, y2 - y1 - 2)
                 self._draw_block(p, rect, QColor(ev.color), ev, len(group))
                 self._event_rects.append((rect, ev))
 
+        # Рисуем текущее время
         if self.current_date == date.today():
             now = datetime.now()
             ny = now.hour * self.HOUR_H + now.minute * self.HOUR_H // 60
@@ -1256,7 +1254,7 @@ class WeekView(QWidget):
     event_changed = pyqtSignal()
     HOUR_H = 56
     TIME_W = 52
-    DAY_NAMES = ["Пн","Вт","Ср","Чт","Пт"]
+    DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]  # Добавлены Сб и Вс
 
     def __init__(self, db):
         super().__init__()
@@ -1281,8 +1279,8 @@ class WeekView(QWidget):
         self._canvas = WeekCanvas(self.db, self.HOUR_H, self.TIME_W)
         self._canvas.event_clicked.connect(self._on_event_click)
         self._canvas.slot_double_clicked.connect(self._on_slot_dblclick)
-        self._canvas.event_moved.connect(self._on_event_moved)      # ДОБАВИТЬ
-        self._canvas.event_resized.connect(self._on_event_resized)  # ДОБАВИТЬ
+        self._canvas.event_moved.connect(self._on_event_moved)
+        self._canvas.event_resized.connect(self._on_event_resized)
         self._canvas.width_changed.connect(self._header_bar.set_canvas_width)
         scroll.setWidget(self._canvas)
         layout.addWidget(scroll, 1)
@@ -1301,14 +1299,13 @@ class WeekView(QWidget):
             self.refresh()
             self.event_changed.emit()
 
-    def _on_event_moved(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+    def _on_event_moved(self, event, new_start_time, new_end_time):
         """Обработчик перемещения события"""
-        # Сохраняем дату (она уже обновлена в canvas)
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
 
-    def _on_event_resized(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+    def _on_event_resized(self, event, new_start_time, new_end_time):
         """Обработчик изменения размера события"""
         db_update_event(self.db, event)
         self.refresh()
@@ -1322,8 +1319,10 @@ class WeekView(QWidget):
             self.event_changed.emit()
 
     def refresh(self):
+        # Находим понедельник текущей недели
         monday = self.current_date - timedelta(days=self.current_date.weekday())
-        days = [monday + timedelta(days=i) for i in range(5)]
+        # Создаем список из 7 дней (Пн, Вт, Ср, Чт, Пт, Сб, Вс)
+        days = [monday + timedelta(days=i) for i in range(7)]
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(days[0], datetime.min.time()),
@@ -1346,44 +1345,72 @@ class WeekView(QWidget):
 
     def header_text(self) -> str:
         monday = self.current_date - timedelta(days=self.current_date.weekday())
-        friday = monday + timedelta(days=4)
-        months = ["января","февраля","марта","апреля","мая","июня",
-                  "июля","августа","сентября","октября","ноября","декабря"]
-        if monday.month == friday.month:
-            return f"{monday.day}–{friday.day} {months[friday.month-1]} {friday.year}"
+        sunday = monday + timedelta(days=6)
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        if monday.month == sunday.month:
+            return f"{monday.day}–{sunday.day} {months[sunday.month-1]} {sunday.year}"
         return (f"{monday.day} {months[monday.month-1]} – "
-                f"{friday.day} {months[friday.month-1]} {friday.year}")
+                f"{sunday.day} {months[sunday.month-1]} {sunday.year}")
 
 
 class WeekHeaderBar(QWidget):
     def __init__(self, hour_h, time_w, day_names):
         super().__init__()
-        self.hour_h = hour_h; self.time_w = time_w
-        self.day_names = day_names; self.days = []
+        self.hour_h = hour_h
+        self.time_w = time_w
+        self.day_names = day_names
+        self.days = []
         self._canvas_width = 0
         self.setFixedHeight(30)
         self.setStyleSheet(
             f"background:{Colors.SECONDARY_BG}; border-bottom:1px solid {Colors.SEPARATOR};"
         )
 
-    def set_canvas_width(self, w): self._canvas_width = w; self.update()
-    def set_days(self, days): self.days = days; self.update()
+    def set_canvas_width(self, w):
+        self._canvas_width = w
+        self.update()
+        
+    def set_days(self, days):
+        self.days = days
+        self.update()
 
     def paintEvent(self, e):
-        if not self.days: return
-        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-        w     = self._canvas_width if self._canvas_width > 0 else self.width()
-        col_w = (w - self.time_w) / 5
+        if not self.days:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self._canvas_width if self._canvas_width > 0 else self.width()
+        col_w = (w - self.time_w) / 7
         today = date.today()
+        
         p.fillRect(0, 0, self.width(), self.height(), QColor(Colors.SECONDARY_BG))
+        
         for i, d in enumerate(self.days):
-            x = self.time_w + i * col_w
+            x = int(self.time_w + i * col_w)
+            # Рисуем вертикальную линию
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
-            p.drawLine(int(x), 0, int(x), self.height())
-            p.setPen(QColor(Colors.RED if d == today else Colors.SECONDARY_TEXT))
+            p.drawLine(x, 0, x, self.height())
+            
+            # Определяем цвет текста
+            is_weekend = (i == 5 or i == 6)
+            if d == today:
+                p.setPen(QColor(Colors.RED))
+            elif is_weekend:
+                p.setPen(QColor(Colors.WEEKEND))
+            else:
+                p.setPen(QColor(Colors.SECONDARY_TEXT))
+            
             p.setFont(QFont("Helvetica Neue", 10))
-            p.drawText(int(x), 0, int(col_w), self.height(),
-                       Qt.AlignCenter, f"{self.day_names[i]} {d.day}")
+            # Рисуем текст по центру ячейки
+            text_rect = QRect(x, 0, int(col_w), self.height())
+            p.drawText(text_rect, Qt.AlignCenter, f"{self.day_names[i]} {d.day}")
+        
+        # Рисуем последнюю линию
+        last_x = int(self.time_w + 7 * col_w)
+        p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
+        p.drawLine(last_x, 0, last_x, self.height())
+        
         p.end()
 
 
@@ -1464,10 +1491,11 @@ class WeekCanvas(QWidget):
         return None
 
     def _get_day_and_minutes_from_pos(self, pos):
+        """Получить день и минуты по позиции мыши"""
         if not self.days:
             return None, None
         
-        col_w = (self.width() - self.TIME_W) / 5
+        col_w = (self.width() - self.TIME_W) / 7  # Изменено с 5 на 7
         col = int((pos.x() - self.TIME_W) / col_w)
         
         if 0 <= col < len(self.days):
@@ -1479,12 +1507,19 @@ class WeekCanvas(QWidget):
         return None, None
     
     def _get_col_from_x(self, x):
+        """Получить индекс колонки по X координате"""
         if not self.days:
             return -1
-        col_w = (self.width() - self.TIME_W) / 5
+        col_w = (self.width() - self.TIME_W) / 7
+        # Вычисляем колонку с округлением
         col = int((x - self.TIME_W) / col_w)
+        # Проверяем границы
         if 0 <= col < len(self.days):
-            return col
+            # Дополнительная проверка по пикселям для точности
+            x_start = self.TIME_W + col * col_w
+            x_end = x_start + col_w
+            if x >= x_start and x < x_end:
+                return col
         return -1
 
     def _update_event_position(self, event, new_day, new_start_minutes):
@@ -1688,11 +1723,18 @@ class WeekCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
-        col_w = (w - self.TIME_W) / 5
+        col_w = (w - self.TIME_W) / 7
         today = date.today()
         
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # СНАЧАЛА РИСУЕМ ПОДСВЕТКУ ТЕКУЩЕГО ДНЯ (под линиями)
+        if today in self.days:
+            col = self.days.index(today)
+            x = int(self.TIME_W + col * col_w)
+            p.fillRect(x, 0, int(col_w), self.height(), QColor(Colors.ACCENT_LIGHT))
+
+        # ПОТОМ РИСУЕМ СЕТКУ (поверх подсветки)
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
@@ -1704,17 +1746,17 @@ class WeekCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w, y + self.HOUR_H // 2)
 
-        for i, d in enumerate(self.days):
+        # Рисуем вертикальные линии для каждого дня
+        for i in range(8):  # 8 линий для 7 колонок
             x = int(self.TIME_W + i * col_w)
-            if d == today:
-                p.fillRect(x, 0, int(col_w), self.height(), QColor(Colors.ACCENT_LIGHT))
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(x, 0, x, self.height())
 
+        # Рисуем события
         self._event_rects = []
         
-        # Группируем события по дням
         for col, day in enumerate(self.days):
+            # Собираем события для этого дня
             day_events = []
             for ev in self.events:
                 if ev.start_dt.date() <= day <= ev.end_dt.date():
@@ -1722,32 +1764,48 @@ class WeekCanvas(QWidget):
             
             if not day_events:
                 continue
-                
+            
+            # Вычисляем позицию для этого дня
             x = int(self.TIME_W + col * col_w) + 3
             cw = int(col_w) - 6
             
-            # Сортируем и группируем пересекающиеся
+            if cw <= 0:
+                continue
+            
+            # Сортируем и группируем пересекающиеся события
             day_events.sort(key=lambda e: (e.start_dt, e.end_dt))
             for group in self._group_overlapping(day_events):
                 seg = cw // len(group)
+                if seg <= 0:
+                    seg = cw
                 for idx, ev in enumerate(group):
                     start_time, end_time = self._get_display_time(ev, day)
                     y1 = start_time.hour * self.HOUR_H + start_time.minute * self.HOUR_H // 60
                     y2 = end_time.hour * self.HOUR_H + end_time.minute * self.HOUR_H // 60
                     if y2 <= y1:
                         y2 = y1 + self.HOUR_H // 2
+                    
+                    # Ограничиваем y2 в пределах видимой области
+                    y2 = min(y2, self.height() - 2)
+                    
                     rect = QRect(x + idx * seg, y1 + 1, seg - 2, y2 - y1 - 2)
-                    self._draw_block(p, rect, QColor(ev.color), ev, len(group))
-                    self._event_rects.append((rect, (ev, day)))
+                    if rect.width() > 0 and rect.height() > 0:
+                        self._draw_block(p, rect, QColor(ev.color), ev, len(group))
+                        self._event_rects.append((rect, (ev, day)))
 
+        # Рисуем текущее время (поверх всего)
         if today in self.days:
             now = datetime.now()
             ny = now.hour * self.HOUR_H + now.minute * self.HOUR_H // 60
             col = self.days.index(today)
             lx = int(self.TIME_W + col * col_w)
             rx = int(self.TIME_W + (col + 1) * col_w)
+            
+            # Красная линия текущего времени
             p.setPen(QPen(QColor(Colors.RED), 2))
             p.drawLine(lx, ny, rx, ny)
+            
+            # Красный кружок слева
             p.setBrush(QBrush(QColor(Colors.RED)))
             p.setPen(Qt.NoPen)
             p.drawEllipse(lx - 4, ny - 4, 8, 8)
