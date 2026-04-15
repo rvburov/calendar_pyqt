@@ -19,7 +19,9 @@ def main():
     window = MainWindow(db)
     window.show()
 
-    sys.exit(app.exec_())
+    exit_code = app.exec_()
+    db.close()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

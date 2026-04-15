@@ -119,3 +119,8 @@ class DatabaseManager:
             )
         """)
         self.conn.commit()
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None

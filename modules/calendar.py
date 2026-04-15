@@ -87,6 +87,7 @@ def db_update_event(db, event: Event):
          event.start_dt.isoformat(), event.end_dt.isoformat(), cat_id, event.id)
     )
     db.conn.commit()
+    event.category_id = cat_id
     event._db = db
 
 def db_delete_event(db, event_id: int):
@@ -231,6 +232,8 @@ class CategoryDialog(QDialog):
         if not item:
             return
         cat = self.category_manager.get_category_by_id(item.data(Qt.UserRole))
+        if not cat:
+            return
         if cat.name in ["Работа", "Личное", "Важное"]:
             QMessageBox.warning(self, "Ошибка", "Нельзя удалить стандартную категорию")
             return
@@ -867,28 +870,15 @@ class DayView(QWidget):
 
     def _on_event_moved(self, event: Event, new_start_time: QTime, new_end_time: QTime):
         """Обработчик перемещения события"""
-        event.start_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_start_time.hour(), new_start_time.minute()
-        )
-        event.end_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_end_time.hour(), new_end_time.minute()
-        )
+        # event.start_dt и event.end_dt уже корректно обновлены в DayCanvas._update_event_position
+        # (включая переход через полночь), поэтому сохраняем их без перезаписи даты
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
 
-    def _on_event_resized(self, event: Event, new_start_time: QTime, new_end_time: QTime):  # ← ДОБАВИТЬ ЭТОТ МЕТОД
+    def _on_event_resized(self, event: Event, new_start_time: QTime, new_end_time: QTime):
         """Обработчик изменения размера события"""
-        event.start_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_start_time.hour(), new_start_time.minute()
-        )
-        event.end_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_end_time.hour(), new_end_time.minute()
-        )
+        # event.start_dt и event.end_dt уже корректно обновлены в DayCanvas.mouseMoveEvent
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
@@ -996,7 +986,7 @@ class DayCanvas(QWidget):
 
     def _update_event_position(self, event, new_start_minutes):
         """Обновить позицию события с фиксацией 15 минут"""
-        duration = (event.end_dt - event.start_dt).seconds // 60
+        duration = int((event.end_dt - event.start_dt).total_seconds()) // 60
         
         # Округляем начальное время до 15 минут
         new_start_minutes = round(new_start_minutes / 15) * 15
@@ -1045,66 +1035,48 @@ class DayCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут с проверкой границ
-                minutes = new_start.minute
-                rounded_minutes = round(minutes / 15) * 15
-                
+                rounded_minutes = round(new_start.minute / 15) * 15
                 if rounded_minutes >= 60:
                     new_start = new_start + timedelta(hours=1)
                     new_start = new_start.replace(minute=0)
-                elif rounded_minutes < 0:
-                    new_start = new_start - timedelta(hours=1)
-                    new_start = new_start.replace(minute=0)
                 else:
                     new_start = new_start.replace(minute=rounded_minutes)
-                
-                # Проверяем границы: не раньше 00:00 и не позже конца - 15 минут
+
                 min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
                 max_start = self.resize_original_end - timedelta(minutes=15)
-                
                 if new_start < min_start:
                     new_start = min_start
                 if new_start > max_start:
                     new_start = max_start
-                
-                if new_start < self.resize_original_end - timedelta(minutes=15):
-                    self.resizing_event.start_dt = new_start
-                    self.update()
-                    
+
+                self.resizing_event.start_dt = new_start
+                self.update()
+
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут с проверкой границ
-                minutes = new_end.minute
-                rounded_minutes = round(minutes / 15) * 15
-                
+                rounded_minutes = round(new_end.minute / 15) * 15
                 if rounded_minutes >= 60:
                     new_end = new_end + timedelta(hours=1)
                     new_end = new_end.replace(minute=0)
-                elif rounded_minutes < 0:
-                    new_end = new_end - timedelta(hours=1)
-                    new_end = new_end.replace(minute=0)
                 else:
                     new_end = new_end.replace(minute=rounded_minutes)
-                
-                # Проверяем границы: не позже 23:59 и не раньше начала + 15 минут
+
                 max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
                 min_end = self.resize_original_start + timedelta(minutes=15)
-                
                 if new_end > max_end:
                     new_end = max_end
                 if new_end < min_end:
                     new_end = min_end
-                
-                if new_end > self.resize_original_start + timedelta(minutes=15):
-                    self.resizing_event.end_dt = new_end
-                    self.update()
-        
+
+                self.resizing_event.end_dt = new_end
+                self.update()
+
         elif self.dragging_event and self.drag_start_y is not None:
             delta_y = e.pos().y() - self.drag_start_y
             delta_minutes = int(delta_y / self.HOUR_H * 60)
             new_start_minutes = self.drag_original_start_minutes + delta_minutes
             self._update_event_position(self.dragging_event, new_start_minutes)
-            
+
         else:
             super().mouseMoveEvent(e)
 
@@ -1559,20 +1531,14 @@ class WeekCanvas(QWidget):
         if not self.days:
             return -1
         col_w = (self.width() - self.TIME_W) / 7
-        # Вычисляем колонку с округлением
         col = int((x - self.TIME_W) / col_w)
-        # Проверяем границы
         if 0 <= col < len(self.days):
-            # Дополнительная проверка по пикселям для точности
-            x_start = self.TIME_W + col * col_w
-            x_end = x_start + col_w
-            if x >= x_start and x < x_end:
-                return col
+            return col
         return -1
 
     def _update_event_position(self, event, new_day, new_start_minutes):
         """Обновить позицию события на новый день и время с фиксацией 15 минут"""
-        duration = (event.end_dt - event.start_dt).seconds // 60
+        duration = int((event.end_dt - event.start_dt).total_seconds()) // 60
         
         # Округляем начальное время до 15 минут
         new_start_minutes = round(new_start_minutes / 15) * 15
@@ -1620,76 +1586,58 @@ class WeekCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут с проверкой границ
-                minutes = new_start.minute
-                rounded_minutes = round(minutes / 15) * 15
-                
+                rounded_minutes = round(new_start.minute / 15) * 15
                 if rounded_minutes >= 60:
                     new_start = new_start + timedelta(hours=1)
                     new_start = new_start.replace(minute=0)
-                elif rounded_minutes < 0:
-                    new_start = new_start - timedelta(hours=1)
-                    new_start = new_start.replace(minute=0)
                 else:
                     new_start = new_start.replace(minute=rounded_minutes)
-                
-                # Проверяем границы: не раньше 00:00 и не позже конца - 15 минут
+
                 min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
                 max_start = self.resize_original_end - timedelta(minutes=15)
-                
                 if new_start < min_start:
                     new_start = min_start
                 if new_start > max_start:
                     new_start = max_start
-                
-                if new_start < self.resize_original_end - timedelta(minutes=15):
-                    self.resizing_event.start_dt = new_start
-                    self.update()
-                    
+
+                self.resizing_event.start_dt = new_start
+                self.update()
+
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                # Округляем до 15 минут с проверкой границ
-                minutes = new_end.minute
-                rounded_minutes = round(minutes / 15) * 15
-                
+                rounded_minutes = round(new_end.minute / 15) * 15
                 if rounded_minutes >= 60:
                     new_end = new_end + timedelta(hours=1)
                     new_end = new_end.replace(minute=0)
-                elif rounded_minutes < 0:
-                    new_end = new_end - timedelta(hours=1)
-                    new_end = new_end.replace(minute=0)
                 else:
                     new_end = new_end.replace(minute=rounded_minutes)
-                
-                # Проверяем границы: не позже 23:59 и не раньше начала + 15 минут
+
                 max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
                 min_end = self.resize_original_start + timedelta(minutes=15)
-                
                 if new_end > max_end:
                     new_end = max_end
                 if new_end < min_end:
                     new_end = min_end
-                
-                if new_end > self.resize_original_start + timedelta(minutes=15):
-                    self.resizing_event.end_dt = new_end
-                    self.update()
-        
+
+                self.resizing_event.end_dt = new_end
+                self.update()
+
         elif self.dragging_event and self.drag_start_y is not None:
             current_x = e.pos().x()
             current_y = e.pos().y()
             current_col = self._get_col_from_x(current_x)
-            
+
             if current_col >= 0:
                 self.drag_current_day = self.days[current_col]
                 delta_y = current_y - self.drag_start_y
                 delta_minutes = int(delta_y / self.HOUR_H * 60)
                 new_start_minutes = self.drag_original_start_minutes + delta_minutes
                 self._update_event_position(
-                    self.dragging_event, 
-                    self.drag_current_day, 
+                    self.dragging_event,
+                    self.drag_current_day,
                     new_start_minutes
                 )
-        
+
         super().mouseMoveEvent(e)
 
     def mousePressEvent(self, e):
@@ -2178,8 +2126,37 @@ class ListView(QWidget):
         if result in (QDialog.Accepted, 2):
             self.refresh(); self.event_changed.emit()
 
-    def go_prev(self): pass
-    def go_next(self): pass
+    def go_prev(self):
+        self._scroll_to_adjacent_date(forward=False)
+
+    def go_next(self):
+        self._scroll_to_adjacent_date(forward=True)
+
+    def _scroll_to_adjacent_date(self, forward: bool):
+        """Прокручивает к следующей/предыдущей дате относительно текущей видимой."""
+        sb = self.scroll.verticalScrollBar()
+        current_y = sb.value()
+        headers = []
+        for i in range(self._vbox.count()):
+            item = self._vbox.itemAt(i)
+            if item and item.widget():
+                lbl = item.widget().findChild(QLabel)
+                if lbl and item.widget().height() == 30:
+                    y = item.widget().mapTo(self._content, QPoint(0, 0)).y()
+                    headers.append(y)
+        if not headers:
+            return
+        if forward:
+            target = next((y for y in headers if y > current_y + 5), headers[-1])
+        else:
+            target = next((y for y in reversed(headers) if y < current_y - 5), headers[0])
+        anim = QPropertyAnimation(sb, b"value")
+        anim.setDuration(300)
+        anim.setStartValue(sb.value())
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.start()
+        self._anim = anim
 
     def go_today(self):
         for i in range(self._vbox.count()):
@@ -2292,24 +2269,28 @@ class CalendarModule(QWidget):
     def _seed_if_empty(self):
         if db_count_events(self.db) > 0: return
         today = date.today()
+        now = datetime.now().replace(second=0, microsecond=0)
+        d1 = now + timedelta(days=1)
+        d3 = now + timedelta(days=3)
+        d5 = now + timedelta(days=5)
         for ev in [
             Event("Планёрка команды",
-                  datetime(today.year,today.month,today.day,9,0),
-                  datetime(today.year,today.month,today.day,10,0), "Работа"),
+                  datetime(today.year, today.month, today.day, 9, 0),
+                  datetime(today.year, today.month, today.day, 10, 0), "Работа"),
             Event("Обед с клиентом",
-                  datetime(today.year,today.month,today.day,12,30),
-                  datetime(today.year,today.month,today.day,14,0), "Важное"),
+                  datetime(today.year, today.month, today.day, 12, 30),
+                  datetime(today.year, today.month, today.day, 14, 0), "Важное"),
             Event("Дедлайн проекта",
-                  (datetime.now()+timedelta(days=3)).replace(hour=18,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=3)).replace(hour=19,minute=0,second=0,microsecond=0),
+                  d3.replace(hour=18, minute=0),
+                  d3.replace(hour=19, minute=0),
                   "Важное"),
             Event("День рождения Ани",
-                  (datetime.now()+timedelta(days=5)).replace(hour=19,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=5)).replace(hour=22,minute=0,second=0,microsecond=0),
+                  d5.replace(hour=19, minute=0),
+                  d5.replace(hour=22, minute=0),
                   "Личное"),
             Event("Код-ревью",
-                  (datetime.now()+timedelta(days=1)).replace(hour=15,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=1)).replace(hour=16,minute=30,second=0,microsecond=0),
+                  d1.replace(hour=15, minute=0),
+                  d1.replace(hour=16, minute=30),
                   "Работа"),
         ]:
             db_add_event(self.db, ev)
