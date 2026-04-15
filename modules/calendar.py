@@ -1099,38 +1099,43 @@ class DayCanvas(QWidget):
                 else:
                     self.dragging_event = ev
                     self.drag_start_y = e.pos().y()
-                    self.drag_original_start_minutes = ev.start_dt.hour * 60 + ev.start_dt.minute
+                    # Учитываем дату события относительно current_date,
+                    # чтобы многодневные события не прыгали при начале drag
+                    date_offset = (ev.start_dt.date() - self.current_date).days
+                    self.drag_original_start_minutes = (
+                        date_offset * 24 * 60 + ev.start_dt.hour * 60 + ev.start_dt.minute
+                    )
                     self.drag_original_start = ev.start_dt
                     self.drag_original_end = ev.end_dt
                     self.selected_event = ev
                     self.update()
                     return
-            
+
             if self.selected_event:
                 self.selected_event = None
                 self.update()
-        
+
         super().mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
         if self.dragging_event and self.drag_start_y is not None:
-            if (self.dragging_event.start_dt != self.drag_original_start or 
+            if (self.dragging_event.start_dt != self.drag_original_start or
                 self.dragging_event.end_dt != self.drag_original_end):
                 self.event_moved.emit(
                     self.dragging_event,
                     self.dragging_event.start_dt.time(),
                     self.dragging_event.end_dt.time()
                 )
-        
+
         if self.resizing_event and self.resize_start_y is not None:
-            if (self.resizing_event.start_dt != self.resize_original_start or 
+            if (self.resizing_event.start_dt != self.resize_original_start or
                 self.resizing_event.end_dt != self.resize_original_end):
                 self.event_resized.emit(
                     self.resizing_event,
                     self.resizing_event.start_dt.time(),
                     self.resizing_event.end_dt.time()
                 )
-        
+
         self.dragging_event = None
         self.drag_start_y = None
         self.drag_original_start_minutes = None
@@ -1462,6 +1467,8 @@ class WeekCanvas(QWidget):
         self.drag_original_day = None
         self.drag_original_start_minutes = None
         self.drag_current_day = None
+        self.drag_start_col = None       # колонка, с которой начался drag (по клику)
+        self.drag_event_day_offset = None  # смещение дня начала события от days[0]
         
         # Для изменения размера
         self.resizing_event = None
@@ -1628,7 +1635,13 @@ class WeekCanvas(QWidget):
             current_col = self._get_col_from_x(current_x)
 
             if current_col >= 0:
-                self.drag_current_day = self.days[current_col]
+                # Вычисляем целевую колонку: смещение относительно колонки клика +
+                # исходный день начала события. Это исключает прыжок при клике
+                # в середину многодневного события.
+                col_delta = current_col - self.drag_start_col
+                new_col = max(0, min(self.drag_event_day_offset + col_delta, len(self.days) - 1))
+                self.drag_current_day = self.days[new_col]
+
                 delta_y = current_y - self.drag_start_y
                 delta_minutes = int(delta_y / self.HOUR_H * 60)
                 new_start_minutes = self.drag_original_start_minutes + delta_minutes
@@ -1665,6 +1678,12 @@ class WeekCanvas(QWidget):
                     self.drag_original_day = ev.start_dt.date()
                     self.drag_original_start_minutes = ev.start_dt.hour * 60 + ev.start_dt.minute
                     self.drag_current_day = ev.start_dt.date()
+                    # Запоминаем колонку клика и смещение дня начала события
+                    click_col = self._get_col_from_x(e.pos().x())
+                    self.drag_start_col = click_col if click_col >= 0 else 0
+                    self.drag_event_day_offset = (
+                        (ev.start_dt.date() - self.days[0]).days if self.days else 0
+                    )
                     self.selected_event = ev
                     self.update()
                     return
@@ -1702,12 +1721,14 @@ class WeekCanvas(QWidget):
         self.drag_original_day = None
         self.drag_original_start_minutes = None
         self.drag_current_day = None
+        self.drag_start_col = None
+        self.drag_event_day_offset = None
         self.resizing_event = None
         self.resizing_edge = None
         self.resize_start_y = None
         self.resize_original_start = None
         self.resize_original_end = None
-        
+
         super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
