@@ -995,8 +995,13 @@ class DayCanvas(QWidget):
         return None
 
     def _update_event_position(self, event, new_start_minutes):
+        """Обновить позицию события с фиксацией 15 минут"""
         duration = (event.end_dt - event.start_dt).seconds // 60
         
+        # Округляем начальное время до 15 минут
+        new_start_minutes = round(new_start_minutes / 15) * 15
+        
+        # Нормализуем минуты
         days_offset = new_start_minutes // (24 * 60)
         new_start_minutes = new_start_minutes % (24 * 60)
         
@@ -1040,14 +1045,28 @@ class DayCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
+                # Округляем до 15 минут
+                minutes = new_start.minute
+                rounded_minutes = round(minutes / 15) * 15
+                if rounded_minutes >= 60:
+                    new_start = new_start.replace(hour=new_start.hour + 1, minute=0)
+                else:
+                    new_start = new_start.replace(minute=rounded_minutes)
+                
                 if new_start < self.resize_original_end - timedelta(minutes=15):
-                    new_start = new_start.replace(minute=(new_start.minute // 15) * 15)
                     self.resizing_event.start_dt = new_start
                     self.update()
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
+                # Округляем до 15 минут
+                minutes = new_end.minute
+                rounded_minutes = round(minutes / 15) * 15
+                if rounded_minutes >= 60:
+                    new_end = new_end.replace(hour=new_end.hour + 1, minute=0)
+                else:
+                    new_end = new_end.replace(minute=rounded_minutes)
+                
                 if new_end > self.resize_original_start + timedelta(minutes=15):
-                    new_end = new_end.replace(minute=(new_end.minute // 15) * 15)
                     self.resizing_event.end_dt = new_end
                     self.update()
         
@@ -1523,8 +1542,13 @@ class WeekCanvas(QWidget):
         return -1
 
     def _update_event_position(self, event, new_day, new_start_minutes):
+        """Обновить позицию события на новый день и время с фиксацией 15 минут"""
         duration = (event.end_dt - event.start_dt).seconds // 60
         
+        # Округляем начальное время до 15 минут
+        new_start_minutes = round(new_start_minutes / 15) * 15
+        
+        # Нормализуем минуты (может быть больше 1439 или меньше 0)
         days_offset = new_start_minutes // (24 * 60)
         new_start_minutes = new_start_minutes % (24 * 60)
         
@@ -1535,6 +1559,7 @@ class WeekCanvas(QWidget):
         new_hour = new_start_minutes // 60
         new_minute = new_start_minutes % 60
         
+        # Вычисляем новую дату (с учетом перехода между днями)
         final_day = new_day + timedelta(days=days_offset)
         
         new_start_dt = datetime(
@@ -1566,14 +1591,28 @@ class WeekCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
+                # Округляем до 15 минут
+                minutes = new_start.minute
+                rounded_minutes = round(minutes / 15) * 15
+                if rounded_minutes >= 60:
+                    new_start = new_start.replace(hour=new_start.hour + 1, minute=0)
+                else:
+                    new_start = new_start.replace(minute=rounded_minutes)
+                
                 if new_start < self.resize_original_end - timedelta(minutes=15):
-                    new_start = new_start.replace(minute=(new_start.minute // 15) * 15)
                     self.resizing_event.start_dt = new_start
                     self.update()
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
+                # Округляем до 15 минут
+                minutes = new_end.minute
+                rounded_minutes = round(minutes / 15) * 15
+                if rounded_minutes >= 60:
+                    new_end = new_end.replace(hour=new_end.hour + 1, minute=0)
+                else:
+                    new_end = new_end.replace(minute=rounded_minutes)
+                
                 if new_end > self.resize_original_start + timedelta(minutes=15):
-                    new_end = new_end.replace(minute=(new_end.minute // 15) * 15)
                     self.resizing_event.end_dt = new_end
                     self.update()
         
