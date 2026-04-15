@@ -7,8 +7,7 @@ from collections import defaultdict
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QStackedWidget, QScrollArea, QDialog, QLineEdit, QTextEdit, QComboBox,
-    QDateEdit, QTimeEdit, QFrame, QSizePolicy, QMessageBox, 
-    QListWidget, QListWidgetItem
+    QDateEdit, QTimeEdit, QFrame, QSizePolicy, QMessageBox
 )
 from PyQt5.QtCore import (
     Qt, QDate, QTime, QTimer, QPoint, QRect, QSize, pyqtSignal,
@@ -94,157 +93,28 @@ def db_delete_event(db, event_id: int):
     db.conn.execute("DELETE FROM events WHERE id=?", (event_id,))
     db.conn.commit()
 
-def db_get_events_by_date_range(db, start: datetime, end: datetime) -> List[Event]:
+def db_get_events_by_date_range(db, start: datetime, end: datetime,
+                                active_ids=None) -> List[Event]:
     cur = db.conn.execute(
         "SELECT * FROM events WHERE start_dt < ? AND end_dt > ? ORDER BY start_dt",
         (end.isoformat(), start.isoformat())
     )
-    return [_row_to_event(db, r) for r in cur.fetchall()]
+    events = [_row_to_event(db, r) for r in cur.fetchall()]
+    if active_ids is not None:
+        events = [e for e in events if e.category_id in active_ids]
+    return events
 
-def db_get_all_events(db) -> List[Event]:
+def db_get_all_events(db, active_ids=None) -> List[Event]:
     cur = db.conn.execute("SELECT * FROM events ORDER BY start_dt")
-    return [_row_to_event(db, r) for r in cur.fetchall()]
+    events = [_row_to_event(db, r) for r in cur.fetchall()]
+    if active_ids is not None:
+        events = [e for e in events if e.category_id in active_ids]
+    return events
 
 def db_count_events(db) -> int:
     return db.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
 
-# ─────────────────────────────────────────────
-# CATEGORY DIALOG
-# ─────────────────────────────────────────────
-
-class CategoryDialog(QDialog):
-    def __init__(self, parent, category_manager: CategoryManager):
-        super().__init__(parent)
-        self.category_manager = category_manager
-        self.setWindowTitle("Управление категориями")
-        self.setMinimumSize(500, 400)
-        self.setModal(True)
-        self._build_ui()
-        self._load_categories()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        self.category_list = QListWidget()
-        self.category_list.setStyleSheet(f"""
-            QListWidget {{
-                background: {Colors.SECONDARY_BG};
-                border: 1px solid {Colors.SEPARATOR};
-                border-radius: 8px; padding: 5px;
-            }}
-            QListWidget::item {{ padding: 8px; border-radius: 6px; }}
-            QListWidget::item:selected {{ background: {Colors.ACCENT_LIGHT}; }}
-        """)
-        self.category_list.itemClicked.connect(self._on_category_selected)
-        layout.addWidget(self.category_list)
-
-        form = QWidget()
-        fl = QGridLayout(form)
-        fl.setSpacing(10)
-        fl.addWidget(QLabel("Название:"), 0, 0)
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Введите название категории")
-        fl.addWidget(self.name_edit, 0, 1)
-        fl.addWidget(QLabel("Цвет:"), 1, 0)
-        self.color_combo = QComboBox()
-        for code, name in CategoryManager.PREDEFINED_COLORS:
-            px = QPixmap(20, 20)
-            px.fill(QColor(code))
-            self.color_combo.addItem(QIcon(px), name, code)
-        fl.addWidget(self.color_combo, 1, 1)
-        layout.addWidget(form)
-
-        btn_layout = QHBoxLayout()
-        for label, slot in [("Добавить", self._add_category),
-                             ("Изменить", self._update_category),
-                             ("Удалить",  self._delete_category)]:
-            btn = QPushButton(label)
-            btn.setFixedSize(90, 30)
-            btn.clicked.connect(slot)
-            btn_layout.addWidget(btn)
-        btn_layout.addStretch()
-        close_btn = QPushButton("Закрыть")
-        close_btn.setFixedSize(90, 30)
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: {Colors.SECONDARY_BG}; color: {Colors.PRIMARY_TEXT};
-                border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px;
-            }}
-            QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
-            QLineEdit, QComboBox {{
-                background: {Colors.SECONDARY_BG}; border: 1px solid {Colors.SEPARATOR};
-                border-radius: 6px; padding: 6px; font-size: 13px;
-            }}
-            QLineEdit:focus {{ border-color: {Colors.ACCENT}; }}
-        """)
-
-    def _load_categories(self):
-        self.category_list.clear()
-        for cat in self.category_manager.get_all_categories():
-            item = QListWidgetItem(cat.name)
-            item.setData(Qt.UserRole, cat.id)
-            item.setForeground(QColor(cat.color))
-            self.category_list.addItem(item)
-
-    def _on_category_selected(self, item):
-        cat = self.category_manager.get_category_by_id(item.data(Qt.UserRole))
-        if cat:
-            self.name_edit.setText(cat.name)
-            for i in range(self.color_combo.count()):
-                if self.color_combo.itemData(i) == cat.color:
-                    self.color_combo.setCurrentIndex(i)
-                    break
-
-    def _add_category(self):
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Ошибка", "Введите название категории")
-            return
-        if self.category_manager.add_category(name, self.color_combo.currentData()):
-            self._load_categories()
-            self.name_edit.clear()
-        else:
-            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
-
-    def _update_category(self):
-        item = self.category_list.currentItem()
-        if not item:
-            return
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Ошибка", "Введите название категории")
-            return
-        if self.category_manager.update_category(item.data(Qt.UserRole), name,
-                                                  self.color_combo.currentData()):
-            self._load_categories()
-        else:
-            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
-
-    def _delete_category(self):
-        item = self.category_list.currentItem()
-        if not item:
-            return
-        cat = self.category_manager.get_category_by_id(item.data(Qt.UserRole))
-        if not cat:
-            return
-        if cat.name in ["Работа", "Личное", "Важное"]:
-            QMessageBox.warning(self, "Ошибка", "Нельзя удалить стандартную категорию")
-            return
-        if QMessageBox.question(
-            self, "Подтверждение",
-            f'Удалить категорию "{cat.name}"?\nСобытия будут переназначены в "Личное"',
-            QMessageBox.Yes | QMessageBox.No
-        ) == QMessageBox.Yes:
-            self.category_manager.delete_category(item.data(Qt.UserRole))
-            self._load_categories()
-            self.name_edit.clear()
 
 
 # ─────────────────────────────────────────────
@@ -343,7 +213,7 @@ class EventDialog(QDialog):
         
         layout.addLayout(end_layout)
 
-        layout.addWidget(QLabel("Категория"))
+        layout.addWidget(QLabel("Календарь"))
         self.category_combo = QComboBox()
         self._load_categories()
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
@@ -509,11 +379,10 @@ class SegmentedControl(QWidget):
 
 
 class NavBar(QWidget):
-    today_clicked     = pyqtSignal()
-    prev_clicked      = pyqtSignal()
-    next_clicked      = pyqtSignal()
-    add_clicked       = pyqtSignal()
-    manage_categories = pyqtSignal()
+    today_clicked = pyqtSignal()
+    prev_clicked  = pyqtSignal()
+    next_clicked  = pyqtSignal()
+    add_clicked   = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -550,11 +419,7 @@ class NavBar(QWidget):
 
         layout.addStretch()
 
-        self.cat_btn = self._btn("Категории")
-        self.cat_btn.clicked.connect(self.manage_categories)
-        layout.addWidget(self.cat_btn)
-
-        self.add_btn = QPushButton("Событие")
+        self.add_btn = QPushButton("+ Событие")
         self.add_btn.setFixedSize(120, 30)
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet(f"""
@@ -714,7 +579,12 @@ class MonthView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
 
     def _build_ui(self):
@@ -775,7 +645,8 @@ class MonthView(QWidget):
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(grid_start, datetime.min.time()),
-            datetime.combine(grid_start + timedelta(days=42), datetime.max.time())
+            datetime.combine(grid_start + timedelta(days=42), datetime.max.time()),
+            active_ids=self._active_ids
         )
         for row in range(6):
             for col in range(7):
@@ -826,7 +697,12 @@ class DayView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._canvas.update)
@@ -887,18 +763,19 @@ class DayView(QWidget):
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(self.current_date, datetime.min.time()),
-            datetime.combine(self.current_date, datetime.max.time())
+            datetime.combine(self.current_date, datetime.max.time()),
+            active_ids=self._active_ids
         )
         self._canvas.set_data(self.current_date, events)
 
     def go_prev(self):
         self.current_date -= timedelta(days=1)
         self.refresh()
-        
+
     def go_next(self):
         self.current_date += timedelta(days=1)
         self.refresh()
-        
+
     def go_today(self):
         self.current_date = date.today()
         self.refresh()
@@ -1285,7 +1162,12 @@ class WeekView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._canvas.update)
@@ -1351,7 +1233,8 @@ class WeekView(QWidget):
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(days[0], datetime.min.time()),
-            datetime.combine(days[-1], datetime.max.time())
+            datetime.combine(days[-1], datetime.max.time()),
+            active_ids=self._active_ids
         )
         self._header_bar.set_days(days)
         self._canvas.set_data(days, events)
@@ -1910,7 +1793,12 @@ class YearView(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db = db; self.current_date = date.today()
+        self._active_ids = None
         self._build_ui(); self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        self.refresh()
 
     def _build_ui(self):
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0)
@@ -1928,7 +1816,8 @@ class YearView(QWidget):
     def refresh(self):
         y = self.current_date.year
         events = db_get_events_by_date_range(
-            self.db, datetime(y,1,1), datetime(y,12,31,23,59,59)
+            self.db, datetime(y,1,1), datetime(y,12,31,23,59,59),
+            active_ids=self._active_ids
         )
         self._canvas.set_data(y, {e.start_dt.date() for e in events}, date.today())
 
@@ -2084,7 +1973,12 @@ class ListView(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db=db; self.current_date=date.today(); self._first_show=True
+        self._active_ids = None
         self._build_ui(); self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        self.refresh()
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -2106,7 +2000,7 @@ class ListView(QWidget):
             item = self._vbox.takeAt(0)
             if item.widget(): item.widget().deleteLater()
 
-        events = db_get_all_events(self.db)
+        events = db_get_all_events(self.db, active_ids=self._active_ids)
         groups = defaultdict(list)
         for ev in events: groups[ev.start_dt.date()].append(ev)
 
@@ -2207,8 +2101,15 @@ class CalendarModule(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db = db
+        self._active_ids = None
         self._build_ui()
         self._seed_if_empty()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        for v in [self.list_view, self.day_view, self.week_view,
+                  self.month_view, self.year_view]:
+            v.set_active_ids(ids)
 
     def _build_ui(self):
         root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
@@ -2226,7 +2127,6 @@ class CalendarModule(QWidget):
         self.navbar.prev_clicked.connect(self._go_prev)
         self.navbar.next_clicked.connect(self._go_next)
         self.navbar.add_clicked.connect(self._add_event)
-        self.navbar.manage_categories.connect(self._manage_categories)
         root.addWidget(self.navbar)
 
         self.stack = QStackedWidget()
@@ -2284,12 +2184,8 @@ class CalendarModule(QWidget):
     def _on_event_changed(self):
         for v in [self.list_view, self.day_view, self.week_view,
                   self.month_view, self.year_view]:
-            v.refresh()
+            v.set_active_ids(self._active_ids)
         self._update_title()
-
-    def _manage_categories(self):
-        if CategoryDialog(self, self.db.category_manager).exec_() == QDialog.Accepted:
-            self._on_event_changed()
 
     def _seed_if_empty(self):
         if db_count_events(self.db) > 0: return
