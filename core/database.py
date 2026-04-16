@@ -25,10 +25,13 @@ class CategoryManager:
         ("#FF6B6B", "Коралловый"),
     ]
 
-    def __init__(self, db_conn):
+    def __init__(self, db_conn, db_exists: bool = False):
         self.conn = db_conn
         self._create_table()
-        self._ensure_default_categories()
+        
+        # Создаем стандартные календари только если база данных только что создана
+        if not db_exists:
+            self._create_default_categories()
 
     def _create_table(self):
         self.conn.execute("""
@@ -40,10 +43,18 @@ class CategoryManager:
         """)
         self.conn.commit()
 
-    def _ensure_default_categories(self):
-        for name, color in [("Работа","#007AFF"),("Личное","#34C759"),("Важное","#FF3B30")]:
-            if not self.conn.execute("SELECT id FROM categories WHERE name=?", (name,)).fetchone():
-                self.add_category(name, color)
+    def _create_default_categories(self):
+        """Создает стандартные календари при первом запуске"""
+        default_categories = [
+            ("Работа", "#007AFF"),
+            ("Личное", "#34C759"),
+            ("Важное", "#FF3B30")
+        ]
+        
+        for name, color in default_categories:
+            self.add_category(name, color)
+        
+        print("Созданы стандартные календари при первом запуске")
 
     def add_category(self, name: str, color: str) -> Optional["Category"]:
         try:
@@ -103,9 +114,19 @@ class DatabaseManager:
             app_data = os.path.dirname(os.path.abspath(__file__))
 
         os.makedirs(app_data, exist_ok=True)
-        self.conn = sqlite3.connect(os.path.join(app_data, "calendar.db"))
+        
+        # Проверяем, существует ли файл базы данных
+        db_path = os.path.join(app_data, "calendar.db")
+        db_exists = os.path.exists(db_path)
+        
+        # Подключаемся к базе данных
+        self.conn = sqlite3.connect(db_path)
+        
+        # Создаем таблицы
         self._create_events_table()
-        self.category_manager = CategoryManager(self.conn)
+        
+        # Создаем менеджер категорий с флагом существования БД
+        self.category_manager = CategoryManager(self.conn, db_exists)
 
     def _create_events_table(self):
         self.conn.execute("""

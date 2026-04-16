@@ -53,19 +53,25 @@ class Event:
 
 def _row_to_event(db, row) -> Event:
     cat = db.category_manager.get_category_by_id(row[5])
+    # Если категория не найдена, используем None вместо "Личное"
+    category_name = cat.name if cat else "Без категории"
     ev = Event(
         id=row[0], title=row[1], description=row[2],
         start_dt=datetime.fromisoformat(row[3]),
         end_dt=datetime.fromisoformat(row[4]),
-        category=cat.name if cat else "Личное",
-        category_id=row[5]
+        category=category_name,
+        category_id=row[5] if cat else None
     )
     ev._db = db
     return ev
 
 def db_add_event(db, event: Event) -> Event:
     cat = db.category_manager.get_category_by_name(event.category)
-    cat_id = cat.id if cat else 1
+    if cat is None:
+        # Если категории нет, показываем ошибку
+        raise ValueError(f"Категория '{event.category}' не существует. Сначала создайте календарь.")
+    
+    cat_id = cat.id
     cur = db.conn.execute(
         "INSERT INTO events (title, description, start_dt, end_dt, category) VALUES (?,?,?,?,?)",
         (event.title, event.description,
@@ -243,15 +249,20 @@ class EventDialog(QDialog):
     def _load_categories(self):
         self.category_combo.clear()
         cats = self.db.category_manager.get_all_categories() \
-               if self.db and hasattr(self.db, 'category_manager') else []
+            if self.db and hasattr(self.db, 'category_manager') else []
+        
+        # НЕ создаем запасные календари, если их нет
         if not cats:
-            cats = [Category("Работа","#007AFF"),
-                    Category("Личное","#34C759"),
-                    Category("Важное","#FF3B30")]
+            # Показываем сообщение, что нужно создать календарь
+            self.category_combo.addItem("--- Нет календарей ---", None)
+            self.category_combo.setEnabled(False)
+            return
+        
         for cat in cats:
             px = QPixmap(16, 16)
             px.fill(QColor(cat.color))
             self.category_combo.addItem(QIcon(px), cat.name, cat.name)
+        self.category_combo.setEnabled(True)
 
     def _fill_from_event(self, event: Event):
         self.title_edit.setText(event.title)
@@ -284,6 +295,11 @@ class EventDialog(QDialog):
         title = self.title_edit.text().strip()
         if not title:
             QMessageBox.warning(self, "Ошибка", "Введите название события")
+            return
+        
+        # Проверяем, выбран ли календарь
+        if self.category_combo.currentData() is None:
+            QMessageBox.warning(self, "Ошибка", "Нет доступных календарей.\nСначала создайте календарь в боковой панели.")
             return
         
         start_dt = datetime(
@@ -386,55 +402,106 @@ class NavBar(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(56)
+        self.setFixedHeight(100)
         self.setStyleSheet(f"""
             QWidget {{
                 background: {Colors.BG};
                 border-bottom: 1px solid {Colors.SEPARATOR};
             }}
         """)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(8)
-
-        self.today_btn = self._btn("Сегодня")
-        self.today_btn.clicked.connect(self.today_clicked)
-        layout.addWidget(self.today_btn)
-
-        for text, signal in [("<", self.prev_clicked), (">", self.next_clicked)]:
-            btn = self._arrow_btn(text)
-            btn.setFixedSize(30, 30)
-            btn.clicked.connect(signal)
-            layout.addWidget(btn)
-
-        layout.addStretch()
-
-        self.title_lbl = QLabel()
-        self.title_lbl.setAlignment(Qt.AlignCenter)
-        self.title_lbl.setStyleSheet(
-            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
-            f"font-weight: 600; border: none;"
-        )
-        layout.addWidget(self.title_lbl)
-
-        layout.addStretch()
-
-        self.add_btn = QPushButton("+ Событие")
-        self.add_btn.setFixedSize(120, 30)
+        
+        # Главный вертикальный layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 8, 16, 8)
+        main_layout.setSpacing(8)
+        
+        # ========== ВЕРХНЯЯ ЧАСТЬ ==========
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(8)
+        
+        # Кнопка "+" слева
+        self.add_btn = QPushButton("+")
+        self.add_btn.setFixedSize(30, 30)
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {Colors.ACCENT}; color: white; border: none;
-                border-radius: 8px; font-size: 13px; font-weight: 600;
+                border-radius: 8px; font-size: 16px; font-weight: 600;
             }}
             QPushButton:hover {{ background: #0063CC; }}
         """)
         self.add_btn.clicked.connect(self.add_clicked)
-        layout.addWidget(self.add_btn)
+        top_layout.addWidget(self.add_btn)
+        
+        # Растяжка, чтобы кнопки видов были по центру
+        top_layout.addStretch()
+        
+        # Кнопки переключения видов (будут добавлены извне)
+        self.segmented_container = QWidget()
+        self.segmented_layout = QHBoxLayout(self.segmented_container)
+        self.segmented_layout.setContentsMargins(0, 0, 0, 0)
+        self.segmented_layout.setSpacing(2)
+        top_layout.addWidget(self.segmented_container)
+        
+        # Растяжка, чтобы иконка поиска была справа
+        top_layout.addStretch()
+        
+        # Иконка поиска
+        self.search_btn = QPushButton("🔍")
+        self.search_btn.setFixedSize(30, 30)
+        self.search_btn.setCursor(Qt.PointingHandCursor)
+        self.search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {Colors.SECONDARY_BG};
+                color: {Colors.PRIMARY_TEXT};
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                background: {Colors.SEPARATOR};
+            }}
+        """)
+        top_layout.addWidget(self.search_btn)
+        
+        main_layout.addLayout(top_layout)
+        
+        # ========== НИЖНЯЯ ЧАСТЬ ==========
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(8)
+        
+        # Заголовок слева
+        self.title_lbl = QLabel()
+        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_lbl.setStyleSheet(
+            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
+            f"font-weight: 600; border: none;"
+        )
+        bottom_layout.addWidget(self.title_lbl)
+        
+        # Растяжка, чтобы отодвинуть кнопки навигации вправо
+        bottom_layout.addStretch()
+        
+        # Кнопка "<"
+        self.prev_btn = self._arrow_btn("<")
+        self.prev_btn.clicked.connect(self.prev_clicked)
+        bottom_layout.addWidget(self.prev_btn)
+        
+        # Кнопка "Сегодня"
+        self.today_btn = self._btn("Сегодня")
+        self.today_btn.clicked.connect(self.today_clicked)
+        bottom_layout.addWidget(self.today_btn)
+        
+        # Кнопка ">"
+        self.next_btn = self._arrow_btn(">")
+        self.next_btn.clicked.connect(self.next_clicked)
+        bottom_layout.addWidget(self.next_btn)
+        
+        main_layout.addLayout(bottom_layout)
 
     def _btn(self, text: str) -> QPushButton:
         btn = QPushButton(text)
-        btn.setFixedSize(120, 30)
+        btn.setFixedSize(80, 30)
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(f"""
             QPushButton {{
@@ -447,6 +514,7 @@ class NavBar(QWidget):
 
     def _arrow_btn(self, text: str) -> QPushButton:
         btn = QPushButton(text)
+        btn.setFixedSize(30, 30)
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(f"""
             QPushButton {{
@@ -456,9 +524,18 @@ class NavBar(QWidget):
             QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
         """)
         return btn
-
+    
     def set_title(self, text: str):
         self.title_lbl.setText(text)
+    
+    def set_segmented_control(self, segmented: QWidget):
+        """Метод для установки segmented control из CalendarModule"""
+        # Очищаем предыдущий контент
+        for i in reversed(range(self.segmented_layout.count())):
+            widget = self.segmented_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+        self.segmented_layout.addWidget(segmented)
 
 
 # ─────────────────────────────────────────────
@@ -2112,16 +2189,11 @@ class CalendarModule(QWidget):
             v.set_active_ids(ids)
 
     def _build_ui(self):
-        root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        top = QWidget(); top.setFixedHeight(32)
-        top.setStyleSheet(f"background:{Colors.WHITE};")
-        tl = QHBoxLayout(top); tl.setContentsMargins(16,0,16,0)
-        self.segmented = SegmentedControl(["Список","День","Неделя","Месяц","Год"])
-        self.segmented.tab_changed.connect(self._switch_view)
-        tl.addStretch(); tl.addWidget(self.segmented); tl.addStretch()
-        root.addWidget(top)
-
+        # Создаем NavBar
         self.navbar = NavBar()
         self.navbar.today_clicked.connect(self._go_today)
         self.navbar.prev_clicked.connect(self._go_prev)
@@ -2129,6 +2201,14 @@ class CalendarModule(QWidget):
         self.navbar.add_clicked.connect(self._add_event)
         root.addWidget(self.navbar)
 
+        # Создаем SegmentedControl для переключения видов
+        self.segmented = SegmentedControl(["Список", "День", "Неделя", "Месяц", "Год"])
+        self.segmented.tab_changed.connect(self._switch_view)
+        
+        # Передаем SegmentedControl в NavBar
+        self.navbar.set_segmented_control(self.segmented)
+
+        # StackedWidget для видов
         self.stack = QStackedWidget()
         self.list_view  = ListView(self.db)
         self.day_view   = DayView(self.db)
@@ -2137,7 +2217,7 @@ class CalendarModule(QWidget):
         self.year_view  = YearView(self.db)
 
         for v in [self.list_view, self.day_view, self.week_view,
-                  self.month_view, self.year_view]:
+                self.month_view, self.year_view]:
             self.stack.addWidget(v)
             v.event_changed.connect(self._on_event_changed)
 

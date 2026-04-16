@@ -43,7 +43,8 @@ calendar_pyqt
 ├── ui
 │   ├── __init__.py
 │   ├── activity_bar.py
-│   └── main_window.py
+│   ├── main_window.py
+│   └── sidebar.py
 └── Календарь.spec
 
 ==================================================
@@ -172,6 +173,11 @@ class DatabaseManager:
             )
         """)
         self.conn.commit()
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
 
 core\styles.py
 class Colors:
@@ -393,7 +399,9 @@ def main():
     window = MainWindow(db)
     window.show()
 
-    sys.exit(app.exec_())
+    exit_code = app.exec_()
+    db.close()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
@@ -409,11 +417,10 @@ from collections import defaultdict
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QStackedWidget, QScrollArea, QDialog, QLineEdit, QTextEdit, QComboBox,
-    QDateEdit, QTimeEdit, QFrame, QSizePolicy, QMessageBox, 
-    QListWidget, QListWidgetItem
+    QDateEdit, QTimeEdit, QFrame, QSizePolicy, QMessageBox
 )
 from PyQt5.QtCore import (
-    Qt, QDate, QTime, QTimer, QPoint, QRect, pyqtSignal,
+    Qt, QDate, QTime, QTimer, QPoint, QRect, QSize, pyqtSignal,
     QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
@@ -489,161 +496,35 @@ def db_update_event(db, event: Event):
          event.start_dt.isoformat(), event.end_dt.isoformat(), cat_id, event.id)
     )
     db.conn.commit()
+    event.category_id = cat_id
     event._db = db
 
 def db_delete_event(db, event_id: int):
     db.conn.execute("DELETE FROM events WHERE id=?", (event_id,))
     db.conn.commit()
 
-def db_get_events_by_date_range(db, start: datetime, end: datetime) -> List[Event]:
+def db_get_events_by_date_range(db, start: datetime, end: datetime,
+                                active_ids=None) -> List[Event]:
     cur = db.conn.execute(
         "SELECT * FROM events WHERE start_dt < ? AND end_dt > ? ORDER BY start_dt",
         (end.isoformat(), start.isoformat())
     )
-    return [_row_to_event(db, r) for r in cur.fetchall()]
+    events = [_row_to_event(db, r) for r in cur.fetchall()]
+    if active_ids is not None:
+        events = [e for e in events if e.category_id in active_ids]
+    return events
 
-def db_get_all_events(db) -> List[Event]:
+def db_get_all_events(db, active_ids=None) -> List[Event]:
     cur = db.conn.execute("SELECT * FROM events ORDER BY start_dt")
-    return [_row_to_event(db, r) for r in cur.fetchall()]
+    events = [_row_to_event(db, r) for r in cur.fetchall()]
+    if active_ids is not None:
+        events = [e for e in events if e.category_id in active_ids]
+    return events
 
 def db_count_events(db) -> int:
     return db.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
 
-# ─────────────────────────────────────────────
-# CATEGORY DIALOG
-# ─────────────────────────────────────────────
-
-class CategoryDialog(QDialog):
-    def __init__(self, parent, category_manager: CategoryManager):
-        super().__init__(parent)
-        self.category_manager = category_manager
-        self.setWindowTitle("Управление категориями")
-        self.setMinimumSize(500, 400)
-        self.setModal(True)
-        self._build_ui()
-        self._load_categories()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        self.category_list = QListWidget()
-        self.category_list.setStyleSheet(f"""
-            QListWidget {{
-                background: {Colors.SECONDARY_BG};
-                border: 1px solid {Colors.SEPARATOR};
-                border-radius: 8px; padding: 5px;
-            }}
-            QListWidget::item {{ padding: 8px; border-radius: 6px; }}
-            QListWidget::item:selected {{ background: {Colors.ACCENT_LIGHT}; }}
-        """)
-        self.category_list.itemClicked.connect(self._on_category_selected)
-        layout.addWidget(self.category_list)
-
-        form = QWidget()
-        fl = QGridLayout(form)
-        fl.setSpacing(10)
-        fl.addWidget(QLabel("Название:"), 0, 0)
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Введите название категории")
-        fl.addWidget(self.name_edit, 0, 1)
-        fl.addWidget(QLabel("Цвет:"), 1, 0)
-        self.color_combo = QComboBox()
-        for code, name in CategoryManager.PREDEFINED_COLORS:
-            px = QPixmap(20, 20)
-            px.fill(QColor(code))
-            self.color_combo.addItem(QIcon(px), name, code)
-        fl.addWidget(self.color_combo, 1, 1)
-        layout.addWidget(form)
-
-        btn_layout = QHBoxLayout()
-        for label, slot in [("Добавить", self._add_category),
-                             ("Изменить", self._update_category),
-                             ("Удалить",  self._delete_category)]:
-            btn = QPushButton(label)
-            btn.setFixedSize(90, 30)
-            btn.clicked.connect(slot)
-            btn_layout.addWidget(btn)
-        btn_layout.addStretch()
-        close_btn = QPushButton("Закрыть")
-        close_btn.setFixedSize(90, 30)
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: {Colors.SECONDARY_BG}; color: {Colors.PRIMARY_TEXT};
-                border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px;
-            }}
-            QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
-            QLineEdit, QComboBox {{
-                background: {Colors.SECONDARY_BG}; border: 1px solid {Colors.SEPARATOR};
-                border-radius: 6px; padding: 6px; font-size: 13px;
-            }}
-            QLineEdit:focus {{ border-color: {Colors.ACCENT}; }}
-        """)
-
-    def _load_categories(self):
-        self.category_list.clear()
-        for cat in self.category_manager.get_all_categories():
-            item = QListWidgetItem(cat.name)
-            item.setData(Qt.UserRole, cat.id)
-            item.setForeground(QColor(cat.color))
-            self.category_list.addItem(item)
-
-    def _on_category_selected(self, item):
-        cat = self.category_manager.get_category_by_id(item.data(Qt.UserRole))
-        if cat:
-            self.name_edit.setText(cat.name)
-            for i in range(self.color_combo.count()):
-                if self.color_combo.itemData(i) == cat.color:
-                    self.color_combo.setCurrentIndex(i)
-                    break
-
-    def _add_category(self):
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Ошибка", "Введите название категории")
-            return
-        if self.category_manager.add_category(name, self.color_combo.currentData()):
-            self._load_categories()
-            self.name_edit.clear()
-        else:
-            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
-
-    def _update_category(self):
-        item = self.category_list.currentItem()
-        if not item:
-            return
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Ошибка", "Введите название категории")
-            return
-        if self.category_manager.update_category(item.data(Qt.UserRole), name,
-                                                  self.color_combo.currentData()):
-            self._load_categories()
-        else:
-            QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
-
-    def _delete_category(self):
-        item = self.category_list.currentItem()
-        if not item:
-            return
-        cat = self.category_manager.get_category_by_id(item.data(Qt.UserRole))
-        if cat.name in ["Работа", "Личное", "Важное"]:
-            QMessageBox.warning(self, "Ошибка", "Нельзя удалить стандартную категорию")
-            return
-        if QMessageBox.question(
-            self, "Подтверждение",
-            f'Удалить категорию "{cat.name}"?\nСобытия будут переназначены в "Личное"',
-            QMessageBox.Yes | QMessageBox.No
-        ) == QMessageBox.Yes:
-            self.category_manager.delete_category(item.data(Qt.UserRole))
-            self._load_categories()
-            self.name_edit.clear()
 
 
 # ─────────────────────────────────────────────
@@ -742,7 +623,7 @@ class EventDialog(QDialog):
         
         layout.addLayout(end_layout)
 
-        layout.addWidget(QLabel("Категория"))
+        layout.addWidget(QLabel("Календарь"))
         self.category_combo = QComboBox()
         self._load_categories()
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
@@ -908,11 +789,10 @@ class SegmentedControl(QWidget):
 
 
 class NavBar(QWidget):
-    today_clicked     = pyqtSignal()
-    prev_clicked      = pyqtSignal()
-    next_clicked      = pyqtSignal()
-    add_clicked       = pyqtSignal()
-    manage_categories = pyqtSignal()
+    today_clicked = pyqtSignal()
+    prev_clicked  = pyqtSignal()
+    next_clicked  = pyqtSignal()
+    add_clicked   = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -949,11 +829,7 @@ class NavBar(QWidget):
 
         layout.addStretch()
 
-        self.cat_btn = self._btn("Категории")
-        self.cat_btn.clicked.connect(self.manage_categories)
-        layout.addWidget(self.cat_btn)
-
-        self.add_btn = QPushButton("Событие")
+        self.add_btn = QPushButton("+ Событие")
         self.add_btn.setFixedSize(120, 30)
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet(f"""
@@ -1113,7 +989,12 @@ class MonthView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
 
     def _build_ui(self):
@@ -1174,7 +1055,8 @@ class MonthView(QWidget):
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(grid_start, datetime.min.time()),
-            datetime.combine(grid_start + timedelta(days=42), datetime.max.time())
+            datetime.combine(grid_start + timedelta(days=42), datetime.max.time()),
+            active_ids=self._active_ids
         )
         for row in range(6):
             for col in range(7):
@@ -1225,7 +1107,12 @@ class DayView(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._canvas.update)
@@ -1269,28 +1156,15 @@ class DayView(QWidget):
 
     def _on_event_moved(self, event: Event, new_start_time: QTime, new_end_time: QTime):
         """Обработчик перемещения события"""
-        event.start_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_start_time.hour(), new_start_time.minute()
-        )
-        event.end_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_end_time.hour(), new_end_time.minute()
-        )
+        # event.start_dt и event.end_dt уже корректно обновлены в DayCanvas._update_event_position
+        # (включая переход через полночь), поэтому сохраняем их без перезаписи даты
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
 
-    def _on_event_resized(self, event: Event, new_start_time: QTime, new_end_time: QTime):  # ← ДОБАВИТЬ ЭТОТ МЕТОД
+    def _on_event_resized(self, event: Event, new_start_time: QTime, new_end_time: QTime):
         """Обработчик изменения размера события"""
-        event.start_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_start_time.hour(), new_start_time.minute()
-        )
-        event.end_dt = datetime(
-            self.current_date.year, self.current_date.month, self.current_date.day,
-            new_end_time.hour(), new_end_time.minute()
-        )
+        # event.start_dt и event.end_dt уже корректно обновлены в DayCanvas.mouseMoveEvent
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
@@ -1299,18 +1173,19 @@ class DayView(QWidget):
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(self.current_date, datetime.min.time()),
-            datetime.combine(self.current_date, datetime.max.time())
+            datetime.combine(self.current_date, datetime.max.time()),
+            active_ids=self._active_ids
         )
         self._canvas.set_data(self.current_date, events)
 
     def go_prev(self):
         self.current_date -= timedelta(days=1)
         self.refresh()
-        
+
     def go_next(self):
         self.current_date += timedelta(days=1)
         self.refresh()
-        
+
     def go_today(self):
         self.current_date = date.today()
         self.refresh()
@@ -1337,72 +1212,56 @@ class DayCanvas(QWidget):
         super().__init__()
         self.db = db
         self.current_date = date.today()
-        self.events: List[Event] = []
+        self.events: List[Event] = []  # Оригинальные события
         self._event_rects: List[tuple] = []
         self.setMinimumHeight(24 * self.HOUR_H)
+        self.setMouseTracking(True)
         
+        # Для перемещения
         self.dragging_event = None
         self.drag_start_y = None
         self.drag_original_start_minutes = None
         self.drag_original_start = None
         self.drag_original_end = None
         
+        # Для изменения размера
         self.resizing_event = None
         self.resizing_edge = None
         self.resize_start_y = None
         self.resize_original_start = None
         self.resize_original_end = None
         
+        # Выделенное событие
         self.selected_event = None
         self.hover_edge = None
-        self.setMouseTracking(True)
 
     def set_data(self, d, events):
         self.current_date = d
-        filtered_events = []
-        self.event_originals = {}
-        
-        for ev in events:
-            if ev.start_dt.date() <= d <= ev.end_dt.date():
-                # Создаем копию для отображения
-                ev_copy = Event(
-                    id=ev.id,
-                    title=ev.title,
-                    description=ev.description,
-                    start_dt=ev.start_dt,
-                    end_dt=ev.end_dt,
-                    category=ev.category,
-                    category_id=ev.category_id
-                )
-                ev_copy._db = self.db
-                
-                if d > ev.start_dt.date():
-                    ev_copy.start_dt = datetime(d.year, d.month, d.day, 0, 0)
-                else:
-                    ev_copy.start_dt = ev.start_dt
-                    
-                if d < ev.end_dt.date():
-                    ev_copy.end_dt = datetime(d.year, d.month, d.day, 23, 59)
-                else:
-                    ev_copy.end_dt = ev.end_dt
-                
-                filtered_events.append(ev_copy)
-                key = (d, ev.id)
-                self.event_originals[key] = ev
-        
-        self.events = filtered_events
+        self.events = events  # Сохраняем оригинальные события
         self._event_rects = []
         self.selected_event = None
         self.hover_edge = None
         self.update()
 
+    def _get_display_time(self, ev, day):
+        """Получить время отображения события для конкретного дня"""
+        if day == ev.start_dt.date():
+            start_time = ev.start_dt
+        else:
+            start_time = datetime(day.year, day.month, day.day, 0, 0)
+        
+        if day == ev.end_dt.date():
+            end_time = ev.end_dt
+        else:
+            end_time = datetime(day.year, day.month, day.day, 23, 59)
+        
+        return start_time, end_time
+
     def _get_event_at_pos(self, pos):
-        """Найти событие по позиции мыши и вернуть оригинал"""
+        """Найти событие по позиции мыши"""
         for rect, ev in self._event_rects:
             if rect.contains(pos):
-                key = (self.current_date, ev.id)
-                original = self.event_originals.get(key, ev)
-                return rect, original
+                return rect, ev
         return None, None
 
     def _get_resize_edge(self, rect, pos):
@@ -1413,8 +1272,13 @@ class DayCanvas(QWidget):
         return None
 
     def _update_event_position(self, event, new_start_minutes):
-        duration = (event.end_dt - event.start_dt).seconds // 60
+        """Обновить позицию события с фиксацией 15 минут"""
+        duration = int((event.end_dt - event.start_dt).total_seconds()) // 60
         
+        # Округляем начальное время до 15 минут
+        new_start_minutes = round(new_start_minutes / 15) * 15
+        
+        # Нормализуем минуты
         days_offset = new_start_minutes // (24 * 60)
         new_start_minutes = new_start_minutes % (24 * 60)
         
@@ -1458,23 +1322,48 @@ class DayCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                if new_start < self.resize_original_end - timedelta(minutes=15):
-                    new_start = new_start.replace(minute=(new_start.minute // 15) * 15)
-                    self.resizing_event.start_dt = new_start
-                    self.update()
+                rounded_minutes = round(new_start.minute / 15) * 15
+                if rounded_minutes >= 60:
+                    new_start = new_start + timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
+                else:
+                    new_start = new_start.replace(minute=rounded_minutes)
+
+                min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
+                max_start = self.resize_original_end - timedelta(minutes=15)
+                if new_start < min_start:
+                    new_start = min_start
+                if new_start > max_start:
+                    new_start = max_start
+
+                self.resizing_event.start_dt = new_start
+                self.update()
+
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                if new_end > self.resize_original_start + timedelta(minutes=15):
-                    new_end = new_end.replace(minute=(new_end.minute // 15) * 15)
-                    self.resizing_event.end_dt = new_end
-                    self.update()
-        
+                rounded_minutes = round(new_end.minute / 15) * 15
+                if rounded_minutes >= 60:
+                    new_end = new_end + timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
+                else:
+                    new_end = new_end.replace(minute=rounded_minutes)
+
+                max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
+                min_end = self.resize_original_start + timedelta(minutes=15)
+                if new_end > max_end:
+                    new_end = max_end
+                if new_end < min_end:
+                    new_end = min_end
+
+                self.resizing_event.end_dt = new_end
+                self.update()
+
         elif self.dragging_event and self.drag_start_y is not None:
             delta_y = e.pos().y() - self.drag_start_y
             delta_minutes = int(delta_y / self.HOUR_H * 60)
             new_start_minutes = self.drag_original_start_minutes + delta_minutes
             self._update_event_position(self.dragging_event, new_start_minutes)
-            
+
         else:
             super().mouseMoveEvent(e)
 
@@ -1497,38 +1386,43 @@ class DayCanvas(QWidget):
                 else:
                     self.dragging_event = ev
                     self.drag_start_y = e.pos().y()
-                    self.drag_original_start_minutes = ev.start_dt.hour * 60 + ev.start_dt.minute
+                    # Учитываем дату события относительно current_date,
+                    # чтобы многодневные события не прыгали при начале drag
+                    date_offset = (ev.start_dt.date() - self.current_date).days
+                    self.drag_original_start_minutes = (
+                        date_offset * 24 * 60 + ev.start_dt.hour * 60 + ev.start_dt.minute
+                    )
                     self.drag_original_start = ev.start_dt
                     self.drag_original_end = ev.end_dt
                     self.selected_event = ev
                     self.update()
                     return
-            
+
             if self.selected_event:
                 self.selected_event = None
                 self.update()
-        
+
         super().mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
         if self.dragging_event and self.drag_start_y is not None:
-            if (self.dragging_event.start_dt != self.drag_original_start or 
+            if (self.dragging_event.start_dt != self.drag_original_start or
                 self.dragging_event.end_dt != self.drag_original_end):
                 self.event_moved.emit(
                     self.dragging_event,
                     self.dragging_event.start_dt.time(),
                     self.dragging_event.end_dt.time()
                 )
-        
+
         if self.resizing_event and self.resize_start_y is not None:
-            if (self.resizing_event.start_dt != self.resize_original_start or 
+            if (self.resizing_event.start_dt != self.resize_original_start or
                 self.resizing_event.end_dt != self.resize_original_end):
                 self.event_resized.emit(
                     self.resizing_event,
                     self.resizing_event.start_dt.time(),
                     self.resizing_event.end_dt.time()
                 )
-        
+
         self.dragging_event = None
         self.drag_start_y = None
         self.drag_original_start_minutes = None
@@ -1554,10 +1448,11 @@ class DayCanvas(QWidget):
 
     def _draw_block(self, p, rect, color, ev, gsz):
         is_selected = (self.selected_event and self.selected_event.id == ev.id)
+        is_dragging = (self.dragging_event and self.dragging_event.id == ev.id)
         
-        if is_selected:
+        if is_selected or is_dragging:
             light = QColor(color)
-            light.setAlpha(60)
+            light.setAlpha(80 if is_dragging else 60)
             p.setBrush(QBrush(light))
             p.setPen(QPen(color, 2))
         else:
@@ -1596,6 +1491,7 @@ class DayCanvas(QWidget):
         w = self.width()
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # Рисуем сетку времени
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
@@ -1607,20 +1503,32 @@ class DayCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w - self.PAD_R, y + self.HOUR_H // 2)
 
+        # Фильтруем события для текущего дня
+        day_events = []
+        for ev in self.events:
+            if ev.start_dt.date() <= self.current_date <= ev.end_dt.date():
+                day_events.append(ev)
+
+        # Рисуем события
         self._event_rects = []
         x = self.TIME_W + 3
         cw = w - self.TIME_W - self.PAD_R - 6
-        for group in self._group_overlapping(self.events):
+        
+        # Сортируем и группируем
+        day_events.sort(key=lambda e: (e.start_dt, e.end_dt))
+        for group in self._group_overlapping(day_events):
             seg = cw // len(group)
             for idx, ev in enumerate(group):
-                y1 = ev.start_dt.hour * self.HOUR_H + ev.start_dt.minute * self.HOUR_H // 60
-                y2 = ev.end_dt.hour * self.HOUR_H + ev.end_dt.minute * self.HOUR_H // 60
+                start_time, end_time = self._get_display_time(ev, self.current_date)
+                y1 = start_time.hour * self.HOUR_H + start_time.minute * self.HOUR_H // 60
+                y2 = end_time.hour * self.HOUR_H + end_time.minute * self.HOUR_H // 60
                 if y2 <= y1:
                     y2 = y1 + self.HOUR_H // 2
                 rect = QRect(x + idx * seg, y1 + 1, seg - 2, y2 - y1 - 2)
                 self._draw_block(p, rect, QColor(ev.color), ev, len(group))
                 self._event_rects.append((rect, ev))
 
+        # Рисуем текущее время
         if self.current_date == date.today():
             now = datetime.now()
             ny = now.hour * self.HOUR_H + now.minute * self.HOUR_H // 60
@@ -1658,13 +1566,18 @@ class WeekView(QWidget):
     event_changed = pyqtSignal()
     HOUR_H = 56
     TIME_W = 52
-    DAY_NAMES = ["Пн","Вт","Ср","Чт","Пт"]
+    DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]  # Добавлены Сб и Вс
 
     def __init__(self, db):
         super().__init__()
         self.db = db
         self.current_date = date.today()
+        self._active_ids = None
         self._build_ui()
+        self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
         self.refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._canvas.update)
@@ -1683,8 +1596,8 @@ class WeekView(QWidget):
         self._canvas = WeekCanvas(self.db, self.HOUR_H, self.TIME_W)
         self._canvas.event_clicked.connect(self._on_event_click)
         self._canvas.slot_double_clicked.connect(self._on_slot_dblclick)
-        self._canvas.event_moved.connect(self._on_event_moved)      # ДОБАВИТЬ
-        self._canvas.event_resized.connect(self._on_event_resized)  # ДОБАВИТЬ
+        self._canvas.event_moved.connect(self._on_event_moved)
+        self._canvas.event_resized.connect(self._on_event_resized)
         self._canvas.width_changed.connect(self._header_bar.set_canvas_width)
         scroll.setWidget(self._canvas)
         layout.addWidget(scroll, 1)
@@ -1703,14 +1616,13 @@ class WeekView(QWidget):
             self.refresh()
             self.event_changed.emit()
 
-    def _on_event_moved(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+    def _on_event_moved(self, event, new_start_time, new_end_time):
         """Обработчик перемещения события"""
-        # Сохраняем дату (она уже обновлена в canvas)
         db_update_event(self.db, event)
         self.refresh()
         self.event_changed.emit()
 
-    def _on_event_resized(self, event, new_start_time, new_end_time):  # ДОБАВИТЬ
+    def _on_event_resized(self, event, new_start_time, new_end_time):
         """Обработчик изменения размера события"""
         db_update_event(self.db, event)
         self.refresh()
@@ -1724,12 +1636,15 @@ class WeekView(QWidget):
             self.event_changed.emit()
 
     def refresh(self):
+        # Находим понедельник текущей недели
         monday = self.current_date - timedelta(days=self.current_date.weekday())
-        days = [monday + timedelta(days=i) for i in range(5)]
+        # Создаем список из 7 дней (Пн, Вт, Ср, Чт, Пт, Сб, Вс)
+        days = [monday + timedelta(days=i) for i in range(7)]
         events = db_get_events_by_date_range(
             self.db,
             datetime.combine(days[0], datetime.min.time()),
-            datetime.combine(days[-1], datetime.max.time())
+            datetime.combine(days[-1], datetime.max.time()),
+            active_ids=self._active_ids
         )
         self._header_bar.set_days(days)
         self._canvas.set_data(days, events)
@@ -1748,44 +1663,72 @@ class WeekView(QWidget):
 
     def header_text(self) -> str:
         monday = self.current_date - timedelta(days=self.current_date.weekday())
-        friday = monday + timedelta(days=4)
-        months = ["января","февраля","марта","апреля","мая","июня",
-                  "июля","августа","сентября","октября","ноября","декабря"]
-        if monday.month == friday.month:
-            return f"{monday.day}–{friday.day} {months[friday.month-1]} {friday.year}"
+        sunday = monday + timedelta(days=6)
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня",
+                  "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+        if monday.month == sunday.month:
+            return f"{monday.day}–{sunday.day} {months[sunday.month-1]} {sunday.year}"
         return (f"{monday.day} {months[monday.month-1]} – "
-                f"{friday.day} {months[friday.month-1]} {friday.year}")
+                f"{sunday.day} {months[sunday.month-1]} {sunday.year}")
 
 
 class WeekHeaderBar(QWidget):
     def __init__(self, hour_h, time_w, day_names):
         super().__init__()
-        self.hour_h = hour_h; self.time_w = time_w
-        self.day_names = day_names; self.days = []
+        self.hour_h = hour_h
+        self.time_w = time_w
+        self.day_names = day_names
+        self.days = []
         self._canvas_width = 0
         self.setFixedHeight(30)
         self.setStyleSheet(
             f"background:{Colors.SECONDARY_BG}; border-bottom:1px solid {Colors.SEPARATOR};"
         )
 
-    def set_canvas_width(self, w): self._canvas_width = w; self.update()
-    def set_days(self, days): self.days = days; self.update()
+    def set_canvas_width(self, w):
+        self._canvas_width = w
+        self.update()
+        
+    def set_days(self, days):
+        self.days = days
+        self.update()
 
     def paintEvent(self, e):
-        if not self.days: return
-        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-        w     = self._canvas_width if self._canvas_width > 0 else self.width()
-        col_w = (w - self.time_w) / 5
+        if not self.days:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w = self._canvas_width if self._canvas_width > 0 else self.width()
+        col_w = (w - self.time_w) / 7
         today = date.today()
+        
         p.fillRect(0, 0, self.width(), self.height(), QColor(Colors.SECONDARY_BG))
+        
         for i, d in enumerate(self.days):
-            x = self.time_w + i * col_w
+            x = int(self.time_w + i * col_w)
+            # Рисуем вертикальную линию
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
-            p.drawLine(int(x), 0, int(x), self.height())
-            p.setPen(QColor(Colors.RED if d == today else Colors.SECONDARY_TEXT))
+            p.drawLine(x, 0, x, self.height())
+            
+            # Определяем цвет текста
+            is_weekend = (i == 5 or i == 6)
+            if d == today:
+                p.setPen(QColor(Colors.RED))
+            elif is_weekend:
+                p.setPen(QColor(Colors.WEEKEND))
+            else:
+                p.setPen(QColor(Colors.SECONDARY_TEXT))
+            
             p.setFont(QFont("Helvetica Neue", 10))
-            p.drawText(int(x), 0, int(col_w), self.height(),
-                       Qt.AlignCenter, f"{self.day_names[i]} {d.day}")
+            # Рисуем текст по центру ячейки
+            text_rect = QRect(x, 0, int(col_w), self.height())
+            p.drawText(text_rect, Qt.AlignCenter, f"{self.day_names[i]} {d.day}")
+        
+        # Рисуем последнюю линию
+        last_x = int(self.time_w + 7 * col_w)
+        p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
+        p.drawLine(last_x, 0, last_x, self.height())
+        
         p.end()
 
 
@@ -1817,6 +1760,8 @@ class WeekCanvas(QWidget):
         self.drag_original_day = None
         self.drag_original_start_minutes = None
         self.drag_current_day = None
+        self.drag_start_col = None       # колонка, с которой начался drag (по клику)
+        self.drag_event_day_offset = None  # смещение дня начала события от days[0]
         
         # Для изменения размера
         self.resizing_event = None
@@ -1866,10 +1811,11 @@ class WeekCanvas(QWidget):
         return None
 
     def _get_day_and_minutes_from_pos(self, pos):
+        """Получить день и минуты по позиции мыши"""
         if not self.days:
             return None, None
         
-        col_w = (self.width() - self.TIME_W) / 5
+        col_w = (self.width() - self.TIME_W) / 7  # Изменено с 5 на 7
         col = int((pos.x() - self.TIME_W) / col_w)
         
         if 0 <= col < len(self.days):
@@ -1881,17 +1827,23 @@ class WeekCanvas(QWidget):
         return None, None
     
     def _get_col_from_x(self, x):
+        """Получить индекс колонки по X координате"""
         if not self.days:
             return -1
-        col_w = (self.width() - self.TIME_W) / 5
+        col_w = (self.width() - self.TIME_W) / 7
         col = int((x - self.TIME_W) / col_w)
         if 0 <= col < len(self.days):
             return col
         return -1
 
     def _update_event_position(self, event, new_day, new_start_minutes):
-        duration = (event.end_dt - event.start_dt).seconds // 60
+        """Обновить позицию события на новый день и время с фиксацией 15 минут"""
+        duration = int((event.end_dt - event.start_dt).total_seconds()) // 60
         
+        # Округляем начальное время до 15 минут
+        new_start_minutes = round(new_start_minutes / 15) * 15
+        
+        # Нормализуем минуты (может быть больше 1439 или меньше 0)
         days_offset = new_start_minutes // (24 * 60)
         new_start_minutes = new_start_minutes % (24 * 60)
         
@@ -1902,6 +1854,7 @@ class WeekCanvas(QWidget):
         new_hour = new_start_minutes // 60
         new_minute = new_start_minutes % 60
         
+        # Вычисляем новую дату (с учетом перехода между днями)
         final_day = new_day + timedelta(days=days_offset)
         
         new_start_dt = datetime(
@@ -1933,33 +1886,64 @@ class WeekCanvas(QWidget):
             
             if self.resizing_edge == 'top':
                 new_start = self.resize_original_start + timedelta(minutes=delta_minutes)
-                if new_start < self.resize_original_end - timedelta(minutes=15):
-                    new_start = new_start.replace(minute=(new_start.minute // 15) * 15)
-                    self.resizing_event.start_dt = new_start
-                    self.update()
+                rounded_minutes = round(new_start.minute / 15) * 15
+                if rounded_minutes >= 60:
+                    new_start = new_start + timedelta(hours=1)
+                    new_start = new_start.replace(minute=0)
+                else:
+                    new_start = new_start.replace(minute=rounded_minutes)
+
+                min_start = datetime(new_start.year, new_start.month, new_start.day, 0, 0)
+                max_start = self.resize_original_end - timedelta(minutes=15)
+                if new_start < min_start:
+                    new_start = min_start
+                if new_start > max_start:
+                    new_start = max_start
+
+                self.resizing_event.start_dt = new_start
+                self.update()
+
             elif self.resizing_edge == 'bottom':
                 new_end = self.resize_original_end + timedelta(minutes=delta_minutes)
-                if new_end > self.resize_original_start + timedelta(minutes=15):
-                    new_end = new_end.replace(minute=(new_end.minute // 15) * 15)
-                    self.resizing_event.end_dt = new_end
-                    self.update()
-        
+                rounded_minutes = round(new_end.minute / 15) * 15
+                if rounded_minutes >= 60:
+                    new_end = new_end + timedelta(hours=1)
+                    new_end = new_end.replace(minute=0)
+                else:
+                    new_end = new_end.replace(minute=rounded_minutes)
+
+                max_end = datetime(new_end.year, new_end.month, new_end.day, 23, 59)
+                min_end = self.resize_original_start + timedelta(minutes=15)
+                if new_end > max_end:
+                    new_end = max_end
+                if new_end < min_end:
+                    new_end = min_end
+
+                self.resizing_event.end_dt = new_end
+                self.update()
+
         elif self.dragging_event and self.drag_start_y is not None:
             current_x = e.pos().x()
             current_y = e.pos().y()
             current_col = self._get_col_from_x(current_x)
-            
+
             if current_col >= 0:
-                self.drag_current_day = self.days[current_col]
+                # Вычисляем целевую колонку: смещение относительно колонки клика +
+                # исходный день начала события. Это исключает прыжок при клике
+                # в середину многодневного события.
+                col_delta = current_col - self.drag_start_col
+                new_col = max(0, min(self.drag_event_day_offset + col_delta, len(self.days) - 1))
+                self.drag_current_day = self.days[new_col]
+
                 delta_y = current_y - self.drag_start_y
                 delta_minutes = int(delta_y / self.HOUR_H * 60)
                 new_start_minutes = self.drag_original_start_minutes + delta_minutes
                 self._update_event_position(
-                    self.dragging_event, 
-                    self.drag_current_day, 
+                    self.dragging_event,
+                    self.drag_current_day,
                     new_start_minutes
                 )
-        
+
         super().mouseMoveEvent(e)
 
     def mousePressEvent(self, e):
@@ -1987,6 +1971,12 @@ class WeekCanvas(QWidget):
                     self.drag_original_day = ev.start_dt.date()
                     self.drag_original_start_minutes = ev.start_dt.hour * 60 + ev.start_dt.minute
                     self.drag_current_day = ev.start_dt.date()
+                    # Запоминаем колонку клика и смещение дня начала события
+                    click_col = self._get_col_from_x(e.pos().x())
+                    self.drag_start_col = click_col if click_col >= 0 else 0
+                    self.drag_event_day_offset = (
+                        (ev.start_dt.date() - self.days[0]).days if self.days else 0
+                    )
                     self.selected_event = ev
                     self.update()
                     return
@@ -2024,12 +2014,14 @@ class WeekCanvas(QWidget):
         self.drag_original_day = None
         self.drag_original_start_minutes = None
         self.drag_current_day = None
+        self.drag_start_col = None
+        self.drag_event_day_offset = None
         self.resizing_event = None
         self.resizing_edge = None
         self.resize_start_y = None
         self.resize_original_start = None
         self.resize_original_end = None
-        
+
         super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
@@ -2090,11 +2082,18 @@ class WeekCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
-        col_w = (w - self.TIME_W) / 5
+        col_w = (w - self.TIME_W) / 7
         today = date.today()
         
         p.fillRect(0, 0, w, self.height(), QColor(Colors.BG))
 
+        # СНАЧАЛА РИСУЕМ ПОДСВЕТКУ ТЕКУЩЕГО ДНЯ (под линиями)
+        if today in self.days:
+            col = self.days.index(today)
+            x = int(self.TIME_W + col * col_w)
+            p.fillRect(x, 0, int(col_w), self.height(), QColor(Colors.ACCENT_LIGHT))
+
+        # ПОТОМ РИСУЕМ СЕТКУ (поверх подсветки)
         for hour in range(24):
             y = hour * self.HOUR_H
             p.setPen(QColor(Colors.SECONDARY_TEXT))
@@ -2106,17 +2105,17 @@ class WeekCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5, Qt.DashLine))
             p.drawLine(self.TIME_W, y + self.HOUR_H // 2, w, y + self.HOUR_H // 2)
 
-        for i, d in enumerate(self.days):
+        # Рисуем вертикальные линии для каждого дня
+        for i in range(8):  # 8 линий для 7 колонок
             x = int(self.TIME_W + i * col_w)
-            if d == today:
-                p.fillRect(x, 0, int(col_w), self.height(), QColor(Colors.ACCENT_LIGHT))
             p.setPen(QPen(QColor(Colors.SEPARATOR), 0.5))
             p.drawLine(x, 0, x, self.height())
 
+        # Рисуем события
         self._event_rects = []
         
-        # Группируем события по дням
         for col, day in enumerate(self.days):
+            # Собираем события для этого дня
             day_events = []
             for ev in self.events:
                 if ev.start_dt.date() <= day <= ev.end_dt.date():
@@ -2124,32 +2123,48 @@ class WeekCanvas(QWidget):
             
             if not day_events:
                 continue
-                
+            
+            # Вычисляем позицию для этого дня
             x = int(self.TIME_W + col * col_w) + 3
             cw = int(col_w) - 6
             
-            # Сортируем и группируем пересекающиеся
+            if cw <= 0:
+                continue
+            
+            # Сортируем и группируем пересекающиеся события
             day_events.sort(key=lambda e: (e.start_dt, e.end_dt))
             for group in self._group_overlapping(day_events):
                 seg = cw // len(group)
+                if seg <= 0:
+                    seg = cw
                 for idx, ev in enumerate(group):
                     start_time, end_time = self._get_display_time(ev, day)
                     y1 = start_time.hour * self.HOUR_H + start_time.minute * self.HOUR_H // 60
                     y2 = end_time.hour * self.HOUR_H + end_time.minute * self.HOUR_H // 60
                     if y2 <= y1:
                         y2 = y1 + self.HOUR_H // 2
+                    
+                    # Ограничиваем y2 в пределах видимой области
+                    y2 = min(y2, self.height() - 2)
+                    
                     rect = QRect(x + idx * seg, y1 + 1, seg - 2, y2 - y1 - 2)
-                    self._draw_block(p, rect, QColor(ev.color), ev, len(group))
-                    self._event_rects.append((rect, (ev, day)))
+                    if rect.width() > 0 and rect.height() > 0:
+                        self._draw_block(p, rect, QColor(ev.color), ev, len(group))
+                        self._event_rects.append((rect, (ev, day)))
 
+        # Рисуем текущее время (поверх всего)
         if today in self.days:
             now = datetime.now()
             ny = now.hour * self.HOUR_H + now.minute * self.HOUR_H // 60
             col = self.days.index(today)
             lx = int(self.TIME_W + col * col_w)
             rx = int(self.TIME_W + (col + 1) * col_w)
+            
+            # Красная линия текущего времени
             p.setPen(QPen(QColor(Colors.RED), 2))
             p.drawLine(lx, ny, rx, ny)
+            
+            # Красный кружок слева
             p.setBrush(QBrush(QColor(Colors.RED)))
             p.setPen(Qt.NoPen)
             p.drawEllipse(lx - 4, ny - 4, 8, 8)
@@ -2188,7 +2203,12 @@ class YearView(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db = db; self.current_date = date.today()
+        self._active_ids = None
         self._build_ui(); self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        self.refresh()
 
     def _build_ui(self):
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0)
@@ -2206,7 +2226,8 @@ class YearView(QWidget):
     def refresh(self):
         y = self.current_date.year
         events = db_get_events_by_date_range(
-            self.db, datetime(y,1,1), datetime(y,12,31,23,59,59)
+            self.db, datetime(y,1,1), datetime(y,12,31,23,59,59),
+            active_ids=self._active_ids
         )
         self._canvas.set_data(y, {e.start_dt.date() for e in events}, date.today())
 
@@ -2292,50 +2313,61 @@ class YearCanvas(QWidget):
 # LIST VIEW
 # ─────────────────────────────────────────────
 
+class ElidedLabel(QLabel):
+    """QLabel, который всегда обрезает текст многоточием по своей ширине.
+    minimumSizeHint возвращает нулевую ширину — layout может свободно сжимать
+    виджет, а обрезка происходит в paintEvent с актуальной шириной."""
+
+    def minimumSizeHint(self):
+        h = super().minimumSizeHint().height()
+        return QSize(0, h)
+
+    def sizeHint(self):
+        h = super().sizeHint().height()
+        return QSize(0, h)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        fm = QFontMetrics(self.font())
+        elided = fm.elidedText(self.text(), Qt.ElideRight, self.width() - 16)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        p.setFont(self.font())
+        p.drawText(self.rect(), Qt.AlignVCenter | Qt.AlignLeft, elided)
+        p.end()
+
+
 class EventRowWidget(QWidget):
     edit_requested = pyqtSignal(object)
 
     def __init__(self, ev, is_past):
         super().__init__()
-        self.ev=ev; self.is_past=is_past
+        self.ev = ev
         self.setFixedHeight(30)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._build()
+        self._build(is_past)
 
-    def _build(self):
-        layout = QHBoxLayout(self); layout.setContentsMargins(24,0,0,0)
-        dot = QLabel(); dot.setFixedSize(10,10)
+    def _build(self, is_past):
+        layout = QHBoxLayout(self); layout.setContentsMargins(24, 0, 0, 0)
+        dot = QLabel(); dot.setFixedSize(10, 10)
         dot.setStyleSheet(f"background:{self.ev.color}; border-radius:5px;")
-        layout.addWidget(dot, 0, alignment=Qt.AlignVCenter); layout.addSpacing(6)
+        layout.addWidget(dot, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(6)
         tl = QLabel(f"{self.ev.start_dt.strftime('%H:%M')} – {self.ev.end_dt.strftime('%H:%M')}")
         tl.setFixedWidth(85)
         tl.setStyleSheet(f"color:{Colors.SECONDARY_TEXT}; font-size:13px; background:transparent;")
-        layout.addWidget(tl, 0, alignment=Qt.AlignVCenter); layout.addSpacing(2)
-        tc = Colors.SECONDARY_TEXT if self.is_past else Colors.PRIMARY_TEXT
-        self.title_lbl = QLabel()
+        layout.addWidget(tl, 0, alignment=Qt.AlignVCenter)
+        layout.addSpacing(2)
+        tc = Colors.SECONDARY_TEXT if is_past else Colors.PRIMARY_TEXT
+        self.title_lbl = ElidedLabel(self.ev.title)
         self.title_lbl.setStyleSheet(
             f"color:{tc}; font-size:13px; background:transparent;"
-            + ("text-decoration:line-through;" if self.is_past else "")
+            + ("text-decoration:line-through;" if is_past else "")
         )
         self.title_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout.addWidget(self.title_lbl, 1)
-        badge = QLabel({"Работа":"💼","Личное":"🏠","Важное":"⭐"}.get(self.ev.category,"📌"))
-        badge.setFixedWidth(40); badge.setAlignment(Qt.AlignCenter)
-        badge.setStyleSheet("font-size:16px; background:transparent;")
-        layout.addWidget(badge, 0, alignment=Qt.AlignVCenter)
         self.setStyleSheet("background:transparent;")
-
-    def showEvent(self, e): super().showEvent(e); QTimer.singleShot(10, self._update_text)
-    def resizeEvent(self, e): super().resizeEvent(e); self._update_text()
-
-    def _update_text(self):
-        if self.width() <= 0: return
-        avail = self.width() - 214
-        if avail > 50:
-            fm = QFontMetrics(self.title_lbl.font())
-            self.title_lbl.setText(fm.elidedText(self.ev.title, Qt.ElideRight, avail))
 
     def enterEvent(self, e): super().enterEvent(e); self.setStyleSheet(f"background:{Colors.ACCENT_LIGHT};")
     def leaveEvent(self, e): super().leaveEvent(e); self.setStyleSheet("background:transparent;")
@@ -2351,7 +2383,12 @@ class ListView(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db=db; self.current_date=date.today(); self._first_show=True
+        self._active_ids = None
         self._build_ui(); self.refresh()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        self.refresh()
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -2373,7 +2410,7 @@ class ListView(QWidget):
             item = self._vbox.takeAt(0)
             if item.widget(): item.widget().deleteLater()
 
-        events = db_get_all_events(self.db)
+        events = db_get_all_events(self.db, active_ids=self._active_ids)
         groups = defaultdict(list)
         for ev in events: groups[ev.start_dt.date()].append(ev)
 
@@ -2399,7 +2436,6 @@ class ListView(QWidget):
                     row = EventRowWidget(ev, is_past)
                     row.edit_requested.connect(self._on_edit)
                     self._vbox.insertWidget(idx, row); idx+=1
-        QTimer.singleShot(50, self._update_all_texts)
 
     def _make_header(self, label, is_past):
         w = QWidget(); w.setFixedHeight(30)
@@ -2411,12 +2447,6 @@ class ListView(QWidget):
         lay.addWidget(lbl); lay.addStretch()
         return w
 
-    def _update_all_texts(self):
-        for child in self._content.findChildren(EventRowWidget):
-            child._update_text()
-
-    def resizeEvent(self, e): super().resizeEvent(e); self._update_all_texts()
-
     def _on_edit(self, ev):
         dlg = EventDialog(self, db=self.db, event=ev)
         result = dlg.exec_()
@@ -2425,8 +2455,37 @@ class ListView(QWidget):
         if result in (QDialog.Accepted, 2):
             self.refresh(); self.event_changed.emit()
 
-    def go_prev(self): pass
-    def go_next(self): pass
+    def go_prev(self):
+        self._scroll_to_adjacent_date(forward=False)
+
+    def go_next(self):
+        self._scroll_to_adjacent_date(forward=True)
+
+    def _scroll_to_adjacent_date(self, forward: bool):
+        """Прокручивает к следующей/предыдущей дате относительно текущей видимой."""
+        sb = self.scroll.verticalScrollBar()
+        current_y = sb.value()
+        headers = []
+        for i in range(self._vbox.count()):
+            item = self._vbox.itemAt(i)
+            if item and item.widget():
+                lbl = item.widget().findChild(QLabel)
+                if lbl and item.widget().height() == 30:
+                    y = item.widget().mapTo(self._content, QPoint(0, 0)).y()
+                    headers.append(y)
+        if not headers:
+            return
+        if forward:
+            target = next((y for y in headers if y > current_y + 5), headers[-1])
+        else:
+            target = next((y for y in reversed(headers) if y < current_y - 5), headers[0])
+        anim = QPropertyAnimation(sb, b"value")
+        anim.setDuration(300)
+        anim.setStartValue(sb.value())
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.start()
+        self._anim = anim
 
     def go_today(self):
         for i in range(self._vbox.count()):
@@ -2452,8 +2511,15 @@ class CalendarModule(QWidget):
     def __init__(self, db):
         super().__init__()
         self.db = db
+        self._active_ids = None
         self._build_ui()
         self._seed_if_empty()
+
+    def set_active_ids(self, ids):
+        self._active_ids = ids
+        for v in [self.list_view, self.day_view, self.week_view,
+                  self.month_view, self.year_view]:
+            v.set_active_ids(ids)
 
     def _build_ui(self):
         root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
@@ -2471,7 +2537,6 @@ class CalendarModule(QWidget):
         self.navbar.prev_clicked.connect(self._go_prev)
         self.navbar.next_clicked.connect(self._go_next)
         self.navbar.add_clicked.connect(self._add_event)
-        self.navbar.manage_categories.connect(self._manage_categories)
         root.addWidget(self.navbar)
 
         self.stack = QStackedWidget()
@@ -2529,82 +2594,40 @@ class CalendarModule(QWidget):
     def _on_event_changed(self):
         for v in [self.list_view, self.day_view, self.week_view,
                   self.month_view, self.year_view]:
-            v.refresh()
+            v.set_active_ids(self._active_ids)
         self._update_title()
-
-    def _manage_categories(self):
-        if CategoryDialog(self, self.db.category_manager).exec_() == QDialog.Accepted:
-            self._on_event_changed()
 
     def _seed_if_empty(self):
         if db_count_events(self.db) > 0: return
         today = date.today()
+        now = datetime.now().replace(second=0, microsecond=0)
+        d1 = now + timedelta(days=1)
+        d3 = now + timedelta(days=3)
+        d5 = now + timedelta(days=5)
         for ev in [
             Event("Планёрка команды",
-                  datetime(today.year,today.month,today.day,9,0),
-                  datetime(today.year,today.month,today.day,10,0), "Работа"),
+                  datetime(today.year, today.month, today.day, 9, 0),
+                  datetime(today.year, today.month, today.day, 10, 0), "Работа"),
             Event("Обед с клиентом",
-                  datetime(today.year,today.month,today.day,12,30),
-                  datetime(today.year,today.month,today.day,14,0), "Важное"),
+                  datetime(today.year, today.month, today.day, 12, 30),
+                  datetime(today.year, today.month, today.day, 14, 0), "Важное"),
             Event("Дедлайн проекта",
-                  (datetime.now()+timedelta(days=3)).replace(hour=18,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=3)).replace(hour=19,minute=0,second=0,microsecond=0),
+                  d3.replace(hour=18, minute=0),
+                  d3.replace(hour=19, minute=0),
                   "Важное"),
             Event("День рождения Ани",
-                  (datetime.now()+timedelta(days=5)).replace(hour=19,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=5)).replace(hour=22,minute=0,second=0,microsecond=0),
+                  d5.replace(hour=19, minute=0),
+                  d5.replace(hour=22, minute=0),
                   "Личное"),
             Event("Код-ревью",
-                  (datetime.now()+timedelta(days=1)).replace(hour=15,minute=0,second=0,microsecond=0),
-                  (datetime.now()+timedelta(days=1)).replace(hour=16,minute=30,second=0,microsecond=0),
+                  d1.replace(hour=15, minute=0),
+                  d1.replace(hour=16, minute=30),
                   "Работа"),
         ]:
             db_add_event(self.db, ev)
 
 modules\tasks.py
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt
-from core.database import DatabaseManager
-from core.styles import Colors
-
-
-class TasksModule(QWidget):
-    def __init__(self, db: DatabaseManager):
-        super().__init__()
-        self.db = db
-        self._create_table()
-        self._build_ui()
-
-    def _create_table(self):
-        self.db.conn.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                title       TEXT NOT NULL,
-                description TEXT DEFAULT '',
-                due_date    TEXT,
-                priority    TEXT DEFAULT 'normal',
-                status      TEXT DEFAULT 'todo',
-                category    INTEGER DEFAULT 1,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        self.db.conn.commit()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignCenter)
-
-        for text, size, color in [
-            ("✅", 48, Colors.SECONDARY_TEXT),
-            ("Задачи", 18, Colors.SECONDARY_TEXT),
-            ("Раздел в разработке", 13, Colors.SEPARATOR),
-        ]:
-            lbl = QLabel(text)
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet(
-                f"color: {color}; font-size: {size}px; background: transparent;"
-            )
-            layout.addWidget(lbl)
+# Модуль задач удалён
 
 setup.py
 import sys
@@ -2638,79 +2661,120 @@ from core.styles import Colors
 
 
 class ActivityBar(QWidget):
-    section_changed = pyqtSignal(int)
+    """Узкая панель слева с иконками-секциями (аналог VS Code Activity Bar).
+    При клике на иконку открывается/закрывается соответствующая панель."""
+
+    section_toggled = pyqtSignal(str, bool)  # (section_id, is_open)
 
     def __init__(self):
         super().__init__()
-        self.setFixedWidth(49)
-        self._active = 0
+        self.setFixedWidth(49)   # 48px + 1px разделитель
+        self._buttons: dict[str, QPushButton] = {}
+        self._build_ui()
 
-        h_layout = QHBoxLayout(self)
-        h_layout.setContentsMargins(0, 0, 0, 0)
-        h_layout.setSpacing(0)
+    # ── Построение UI ──────────────────────────────────────
 
-        inner = QWidget()
-        inner.setStyleSheet(f"background: {Colors.ACTIVITY_BAR};")
-        inner.setFixedWidth(48)
+    def _build_ui(self):
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
 
-        layout = QVBoxLayout(inner)
-        layout.setContentsMargins(4, 12, 4, 12)
-        layout.setSpacing(4)
-        layout.setAlignment(Qt.AlignTop)
+        self._inner = QWidget()
+        self._inner.setStyleSheet(f"background: {Colors.ACTIVITY_BAR};")
+        self._inner.setFixedWidth(48)
 
-        self._btns = []
-        for i, (icon, tip) in enumerate([("📅", "Календарь"), ("✅", "Задачи")]):
-            btn = QPushButton(icon)
-            btn.setToolTip(tip)
-            btn.setFixedSize(40, 40)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda checked, idx=i: self._on_click(idx))
-            layout.addWidget(btn)
-            self._btns.append(btn)
+        self._vbox = QVBoxLayout(self._inner)
+        self._vbox.setContentsMargins(4, 8, 4, 8)
+        self._vbox.setSpacing(4)
+        self._vbox.setAlignment(Qt.AlignTop)
 
-        layout.addStretch()
+        # Начальная секция — календари
+        self.add_section("calendars", "☰", "Мои календари", checked=True)
+
+        self._vbox.addStretch()
 
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setFixedWidth(1)
         line.setStyleSheet("background: #C8C8C8; border: none;")
 
-        h_layout.addWidget(inner)
-        h_layout.addWidget(line)
-        self._update_styles()
+        h.addWidget(self._inner)
+        h.addWidget(line)
 
-    def _on_click(self, idx: int):
-        self._active = idx
-        self._update_styles()
-        self.section_changed.emit(idx)
+    # ── Публичный API ───────────────────────────────────────
 
-    def _update_styles(self):
-        for i, btn in enumerate(self._btns):
-            if i == self._active:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: {Colors.WHITE}; border: none;
-                        border-radius: 4px; font-size: 18px;
-                    }}
-                """)
-            else:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: transparent; border: none;
-                        border-radius: 4px; font-size: 18px;
-                    }}
-                    QPushButton:hover {{ background: {Colors.WHITE}; }}
-                """)
+    def add_section(self, section_id: str, icon: str, tooltip: str, checked=False):
+        """Добавляет новую иконку-секцию в панель."""
+        btn = QPushButton(icon)
+        btn.setToolTip(tooltip)
+        btn.setFixedSize(40, 40)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setCheckable(True)
+        btn.setChecked(checked)
+        self._apply_style(btn, checked)
+        btn.toggled.connect(lambda state, sid=section_id, b=btn: self._on_toggled(sid, b, state))
+        self._buttons[section_id] = btn
+        # Вставляем перед stretch-ом (последний элемент)
+        insert_pos = max(0, self._vbox.count() - 1)
+        self._vbox.insertWidget(insert_pos, btn)
+
+    def set_section_open(self, section_id: str, is_open: bool):
+        """Синхронизирует визуальное состояние кнопки извне (без эмита сигнала)."""
+        btn = self._buttons.get(section_id)
+        if btn:
+            btn.blockSignals(True)
+            btn.setChecked(is_open)
+            self._apply_style(btn, is_open)
+            btn.blockSignals(False)
+
+    # ── Внутренняя логика ───────────────────────────────────
+
+    def _on_toggled(self, section_id: str, btn: QPushButton, checked: bool):
+        self._apply_style(btn, checked)
+        # Если открываем новую секцию — снимаем отметку с остальных
+        if checked:
+            for sid, b in self._buttons.items():
+                if sid != section_id and b.isChecked():
+                    b.blockSignals(True)
+                    b.setChecked(False)
+                    self._apply_style(b, False)
+                    b.blockSignals(False)
+        self.section_toggled.emit(section_id, checked)
+
+    def _apply_style(self, btn: QPushButton, active: bool):
+        if active:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {Colors.WHITE};
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 18px;
+                    color: {Colors.ACCENT};
+                }}
+            """)
+        else:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 18px;
+                    color: {Colors.PRIMARY_TEXT};
+                }}
+                QPushButton:hover {{
+                    background: rgba(0, 0, 0, 0.08);
+                }}
+            """)
 
 ui\main_window.py
 import os, sys
-from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QStackedWidget
+from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QFrame
 from PyQt5.QtGui import QIcon
 
 from core.database import DatabaseManager
 from ui.activity_bar import ActivityBar
+from ui.sidebar import CalendarSidebar
 from modules.calendar import CalendarModule
-from modules.tasks import TasksModule
 
 
 class MainWindow(QMainWindow):
@@ -2730,25 +2794,430 @@ class MainWindow(QMainWindow):
         h_root.setContentsMargins(0, 0, 0, 0)
         h_root.setSpacing(0)
 
+        # ActivityBar — узкая панель с иконками секций
         self.activity_bar = ActivityBar()
-        self.activity_bar.section_changed.connect(self._switch_section)
         h_root.addWidget(self.activity_bar)
 
-        self.section_stack = QStackedWidget()
-        self.section_stack.addWidget(CalendarModule(self.db))
-        self.section_stack.addWidget(TasksModule(self.db))
-        h_root.addWidget(self.section_stack, 1)
+        # Сайдбар с календарями (открыт по умолчанию)
+        self.sidebar = CalendarSidebar(self.db)
+        h_root.addWidget(self.sidebar)
 
-    def _switch_section(self, idx: int):
-        self.section_stack.setCurrentIndex(idx)
+        # Разделитель между сайдбаром и основным контентом
+        self._separator = QFrame()
+        self._separator.setFrameShape(QFrame.VLine)
+        self._separator.setFixedWidth(1)
+        self._separator.setStyleSheet("background: #C8C8C8; border: none;")
+        h_root.addWidget(self._separator)
+
+        # Основной модуль календаря
+        self.calendar_module = CalendarModule(self.db)
+        h_root.addWidget(self.calendar_module, 1)
+
+        # Сигналы ActivityBar
+        self.activity_bar.section_toggled.connect(self._on_section_toggled)
+
+        # Сигналы сайдбара
+        self.sidebar.visibility_changed.connect(self._on_visibility_changed)
+        self.sidebar.calendars_changed.connect(self._on_calendars_changed)
+
+        # Инициализируем фильтр после создания обоих виджетов
+        self.calendar_module.set_active_ids(self.sidebar.get_active_ids())
+
+    # ── Обработчики ─────────────────────────────────────────
+
+    def _on_section_toggled(self, section_id: str, is_open: bool):
+        """ActivityBar: пользователь нажал кнопку секции."""
+        if section_id == "calendars":
+            # Синхронизируем состояние анимации сайдбара с кнопкой
+            if is_open != self.sidebar.is_open:
+                self.sidebar.toggle()
+
+    def _on_visibility_changed(self):
+        self.calendar_module.set_active_ids(self.sidebar.get_active_ids())
+
+    def _on_calendars_changed(self):
+        self.sidebar.refresh()
+        self.calendar_module.set_active_ids(self.sidebar.get_active_ids())
 
     def _load_icon(self):
         if getattr(sys, "frozen", False):
             base = sys._MEIPASS
         else:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
+
         icon_path = os.path.join(base, "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+
+ui\sidebar.py
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QListWidget, QListWidgetItem, QDialog, QLineEdit, QComboBox,
+    QMessageBox, QMenu, QFrame, QSizePolicy
+)
+from PyQt5.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize
+from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter, QPen, QBrush, QPainterPath
+
+from core.styles import Colors
+from core.database import CategoryManager
+
+
+SIDEBAR_WIDTH = 220
+
+
+# ─────────────────────────────────────────────
+# ЧЕКБОКС — ОКРУГЛЁННЫЙ КВАДРАТ С ГАЛКОЙ
+# ─────────────────────────────────────────────
+
+class CalendarCheckBox(QWidget):
+    """Округлённый квадрат: цвет календаря + чёрная галка если выбран."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, color: str, checked: bool = False, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(18, 18)
+        self.setCursor(Qt.PointingHandCursor)
+        self._color = color
+        self._checked = checked
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, value: bool):
+        self._checked = value
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._checked = not self._checked
+            self.update()
+            self.toggled.emit(self._checked)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect().adjusted(1, 1, -1, -1)
+
+        if self._checked:
+            # Закрашенный квадрат цвета календаря
+            p.setBrush(QBrush(QColor(self._color)))
+            p.setPen(QPen(QColor(self._color), 1.5))
+            p.drawRoundedRect(r, 4, 4)
+
+            # Чёрная галка
+            p.setPen(QPen(QColor("#000000"), 1.8,
+                          Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            w, h = self.width(), self.height()
+            path = QPainterPath()
+            path.moveTo(w * 0.20, h * 0.52)
+            path.lineTo(w * 0.42, h * 0.74)
+            path.lineTo(w * 0.80, h * 0.28)
+            p.drawPath(path)
+        else:
+            # Только рамка цвета календаря
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(self._color), 1.5))
+            p.drawRoundedRect(r, 4, 4)
+
+        p.end()
+
+
+# ─────────────────────────────────────────────
+# ДИАЛОГ СОЗДАНИЯ / РЕДАКТИРОВАНИЯ КАЛЕНДАРЯ
+# ─────────────────────────────────────────────
+
+class CalendarEditDialog(QDialog):
+    def __init__(self, parent, category_manager: CategoryManager, category=None):
+        super().__init__(parent)
+        self.category_manager = category_manager
+        self.category = category
+        self.setWindowTitle("Изменить календарь" if category else "Новый календарь")
+        self.setFixedWidth(300)
+        self.setModal(True)
+        self._build_ui()
+        if category:
+            self._fill(category)
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout.addWidget(QLabel("Название"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Название календаря")
+        layout.addWidget(self.name_edit)
+
+        layout.addWidget(QLabel("Цвет"))
+        self.color_combo = QComboBox()
+        for code, name in CategoryManager.PREDEFINED_COLORS:
+            px = QPixmap(16, 16)
+            px.fill(QColor(code))
+            self.color_combo.addItem(QIcon(px), name, code)
+        layout.addWidget(self.color_combo)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        save_btn = QPushButton("Сохранить")
+        save_btn.clicked.connect(self._save)
+        btn_layout.addWidget(save_btn)
+        layout.addLayout(btn_layout)
+
+        self.setStyleSheet(f"""
+            QDialog {{ background: {Colors.BG}; }}
+            QLabel {{ color: {Colors.SECONDARY_TEXT}; font-size: 13px; font-weight: 600; }}
+            QLineEdit, QComboBox {{
+                background: {Colors.SECONDARY_BG}; border: 1px solid {Colors.SEPARATOR};
+                border-radius: 6px; padding: 6px; font-size: 13px; color: {Colors.PRIMARY_TEXT};
+            }}
+            QLineEdit:focus {{ border-color: {Colors.ACCENT}; }}
+            QPushButton {{
+                background: {Colors.SECONDARY_BG}; color: {Colors.PRIMARY_TEXT};
+                border: none; border-radius: 6px; padding: 6px 16px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background: {Colors.SEPARATOR}; }}
+        """)
+
+    def _fill(self, cat):
+        self.name_edit.setText(cat.name)
+        for i in range(self.color_combo.count()):
+            if self.color_combo.itemData(i) == cat.color:
+                self.color_combo.setCurrentIndex(i)
+                break
+
+    def _save(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Ошибка", "Введите название календаря")
+            return
+        self.result_name = name
+        self.result_color = self.color_combo.currentData()
+        self.accept()
+
+
+# ─────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────
+
+class CalendarSidebar(QWidget):
+    visibility_changed = pyqtSignal()  # переключена видимость календаря
+    calendars_changed  = pyqtSignal()  # добавлен/изменён/удалён календарь
+
+    def __init__(self, db):
+        super().__init__()
+        self.db = db
+        self._active_ids: set = set()
+        self._open = True
+
+        self.setFixedWidth(SIDEBAR_WIDTH)
+        self.setMinimumWidth(0)
+        self._build_ui()
+        self.refresh()
+
+        self._anim = QPropertyAnimation(self, b"maximumWidth")
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.InOutCubic)
+
+    def _build_ui(self):
+        self.setStyleSheet(f"background: {Colors.SECONDARY_BG};")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Заголовок
+        header = QWidget()
+        header.setFixedHeight(48)
+        header.setStyleSheet(
+            f"background: {Colors.SECONDARY_BG};"
+            f"border-bottom: 1px solid {Colors.SEPARATOR};"
+        )
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 0, 16, 0)
+        title = QLabel("Мои календари")
+        title.setStyleSheet(
+            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
+            f"font-weight: 600; background: transparent;"
+        )
+        hl.addWidget(title)
+        layout.addWidget(header)
+
+        # Список календарей
+        self._list = QListWidget()
+        self._list.setStyleSheet(f"""
+            QListWidget {{
+                background: {Colors.SECONDARY_BG};
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 0px;
+                border: none;
+                background: transparent;
+            }}
+            QListWidget::item:selected {{
+                background: transparent;
+            }}
+        """)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._show_context_menu)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        layout.addWidget(self._list, 1)
+
+        # Разделитель
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {Colors.SEPARATOR}; border: none;")
+        layout.addWidget(sep)
+
+        # Кнопка добавления
+        add_btn = QPushButton("+ Добавить календарь")
+        add_btn.setFixedHeight(40)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {Colors.ACCENT};
+                border: none; font-size: 13px;
+                text-align: left; padding: 0 16px;
+            }}
+            QPushButton:hover {{ background: {Colors.ACCENT_LIGHT}; }}
+        """)
+        add_btn.clicked.connect(self._add_calendar)
+        layout.addWidget(add_btn)
+
+    # ── Данные ──────────────────────────────
+
+    def refresh(self):
+        self._list.clear()
+        cats = self.db.category_manager.get_all_categories()
+        if not self._active_ids:
+            self._active_ids = {cat.id for cat in cats}
+        for cat in cats:
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, cat.id)
+            item.setSizeHint(QSize(SIDEBAR_WIDTH, 36))
+            self._list.addItem(item)
+            row = self._make_row(cat, cat.id in self._active_ids)
+            self._list.setItemWidget(item, row)
+
+    def get_active_ids(self) -> set:
+        return self._active_ids.copy()
+
+    # ── Строка календаря ────────────────────
+
+    def _make_row(self, cat, checked: bool) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(10)
+
+        checkbox = CalendarCheckBox(cat.color, checked)
+        checkbox.toggled.connect(
+            lambda state, cid=cat.id: self._on_toggle(cid, state)
+        )
+        layout.addWidget(checkbox)
+
+        lbl = QLabel(cat.name)
+        lbl.setStyleSheet(
+            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px; background: transparent;"
+        )
+        layout.addWidget(lbl, 1)
+        return w
+
+    def _on_toggle(self, cat_id: int, checked: bool):
+        if checked:
+            self._active_ids.add(cat_id)
+        else:
+            self._active_ids.discard(cat_id)
+        self.visibility_changed.emit()
+
+    # ── Контекстное меню ────────────────────
+
+    def _show_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if not item:
+            return
+        cat = self.db.category_manager.get_category_by_id(item.data(Qt.UserRole))
+        if not cat:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {Colors.SECONDARY_BG};
+                border: 1px solid {Colors.SEPARATOR};
+                border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px; font-size: 13px;
+                color: {Colors.PRIMARY_TEXT}; border-radius: 4px;
+            }}
+            QMenu::item:selected {{ background: {Colors.ACCENT_LIGHT}; }}
+            QMenu::item:disabled {{ color: {Colors.SEPARATOR}; }}
+        """)
+        edit_action   = menu.addAction("Изменить")
+        delete_action = menu.addAction("Удалить")
+
+        if cat.name in ["Работа", "Личное", "Важное"]:
+            delete_action.setEnabled(False)
+
+        action = menu.exec_(self._list.viewport().mapToGlobal(pos))
+        if action == edit_action:
+            self._edit_calendar(cat)
+        elif action == delete_action:
+            self._delete_calendar(cat)
+
+    # ── CRUD ────────────────────────────────
+
+    def _add_calendar(self):
+        dlg = CalendarEditDialog(self, self.db.category_manager)
+        if dlg.exec_() == QDialog.Accepted:
+            cat = self.db.category_manager.add_category(dlg.result_name, dlg.result_color)
+            if cat:
+                self._active_ids.add(cat.id)
+                self.refresh()
+                self.calendars_changed.emit()
+            else:
+                QMessageBox.warning(self, "Ошибка", "Календарь с таким названием уже существует")
+
+    def _edit_calendar(self, cat):
+        dlg = CalendarEditDialog(self, self.db.category_manager, cat)
+        if dlg.exec_() == QDialog.Accepted:
+            if self.db.category_manager.update_category(cat.id, dlg.result_name, dlg.result_color):
+                self.refresh()
+                self.calendars_changed.emit()
+            else:
+                QMessageBox.warning(self, "Ошибка", "Календарь с таким названием уже существует")
+
+    def _delete_calendar(self, cat):
+        if QMessageBox.question(
+            self, "Подтверждение",
+            f'Удалить календарь "{cat.name}"?\nСобытия будут перенесены в "Личное"',
+            QMessageBox.Yes | QMessageBox.No
+        ) == QMessageBox.Yes:
+            self._active_ids.discard(cat.id)
+            self.db.category_manager.delete_category(cat.id)
+            self.refresh()
+            self.calendars_changed.emit()
+
+    # ── Анимация ────────────────────────────
+
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    def toggle(self):
+        if self._open:
+            self._anim.setStartValue(SIDEBAR_WIDTH)
+            self._anim.setEndValue(0)
+        else:
+            self._anim.setStartValue(0)
+            self._anim.setEndValue(SIDEBAR_WIDTH)
+        self._anim.start()
+        self._open = not self._open
 
