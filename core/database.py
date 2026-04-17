@@ -136,7 +136,8 @@ class DatabaseManager:
                 description TEXT DEFAULT '',
                 start_dt    TEXT NOT NULL,
                 end_dt      TEXT NOT NULL,
-                category    INTEGER DEFAULT 1
+                category    INTEGER DEFAULT 1,
+                all_day     INTEGER DEFAULT 0
             )
         """)
         self.conn.commit()
