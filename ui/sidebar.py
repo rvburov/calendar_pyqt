@@ -80,7 +80,7 @@ class CalendarEditDialog(QDialog):
         super().__init__(parent)
         self.category_manager = category_manager
         self.category = category
-        self.setWindowTitle("Изменить календарь" if category else "Новый календарь")
+        self.setWindowTitle("Изменить категорию" if category else "Новый категория")
         self.setFixedWidth(300)
         self.setModal(True)
         self._build_ui()
@@ -94,7 +94,7 @@ class CalendarEditDialog(QDialog):
 
         layout.addWidget(QLabel("Название"))
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Название календаря")
+        self.name_edit.setPlaceholderText("Название категории")
         layout.addWidget(self.name_edit)
 
         layout.addWidget(QLabel("Цвет"))
@@ -140,7 +140,7 @@ class CalendarEditDialog(QDialog):
     def _save(self):
         name = self.name_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "Ошибка", "Введите название календаря")
+            QMessageBox.warning(self, "Ошибка", "Введите название категории")
             return
         self.result_name = name
         self.result_color = self.color_combo.currentData()
@@ -152,15 +152,15 @@ class CalendarEditDialog(QDialog):
 # ─────────────────────────────────────────────
 
 class CalendarSidebar(QWidget):
-    visibility_changed = pyqtSignal()  # переключена видимость календаря
-    calendars_changed  = pyqtSignal()  # добавлен/изменён/удалён календарь
+    visibility_changed = pyqtSignal()  # переключена видимость категории
+    calendars_changed  = pyqtSignal()  # добавлена/изменёна/удалёна категория
 
     def __init__(self, db):
         super().__init__()
         self.db = db
         self._active_ids: set = set()
         self._open = True
-        self._current_selected_id = None  # Для отслеживания выбранного календаря
+        self._current_selected_id = None  # Для отслеживания выбранной категории
 
         self.setFixedWidth(SIDEBAR_WIDTH)
         self.setMinimumWidth(0)
@@ -186,7 +186,7 @@ class CalendarSidebar(QWidget):
         )
         hl = QHBoxLayout(header)
         hl.setContentsMargins(16, 0, 16, 0)
-        title = QLabel("Мои календари")
+        title = QLabel("Категории")
         title.setStyleSheet(
             f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
             f"font-weight: 600; background: transparent;"
@@ -227,7 +227,7 @@ class CalendarSidebar(QWidget):
         layout.addWidget(sep)
 
         # Кнопка добавления
-        add_btn = QPushButton("+ Добавить календарь")
+        add_btn = QPushButton("+ Добавить категорию")
         add_btn.setFixedHeight(40)
         add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.setStyleSheet(f"""
@@ -332,7 +332,7 @@ class CalendarSidebar(QWidget):
     def _edit_calendar_with_delete(self, cat):
         """Диалог редактирования с кнопкой удаления и выбором календаря для переноса"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Изменить календарь")
+        dialog.setWindowTitle("Изменить категорию")
         dialog.setFixedWidth(350)
         dialog.setModal(True)
         dialog.setStyleSheet(f"""
@@ -404,7 +404,7 @@ class CalendarSidebar(QWidget):
         def on_save():
             new_name = name_edit.text().strip()
             if not new_name:
-                QMessageBox.warning(dialog, "Ошибка", "Введите название календаря")
+                QMessageBox.warning(dialog, "Ошибка", "Введите название категории")
                 return
             new_color = color_combo.currentData()
             if self.db.category_manager.update_category(cat.id, new_name, new_color):
@@ -412,7 +412,7 @@ class CalendarSidebar(QWidget):
                 self.refresh()
                 self.calendars_changed.emit()
             else:
-                QMessageBox.warning(dialog, "Ошибка", "Календарь с таким названием уже существует")
+                QMessageBox.warning(dialog, "Ошибка", "Категория с таким названием уже существует")
         
         def on_delete():
             # Получаем все календари кроме удаляемого
@@ -423,7 +423,7 @@ class CalendarSidebar(QWidget):
                 reply = QMessageBox.question(
                     dialog,
                     "Подтверждение удаления",
-                    f'Нет других календарей для переноса событий.\n\nВсе события календаря "{cat.name}" будут УДАЛЕНЫ безвозвратно.\n\nВы уверены, что хотите удалить календарь?',
+                    f'Нет других категорий для переноса событий.\n\nВсе события категории "{cat.name}" будут УДАЛЕНЫ безвозвратно.\n\nВы уверены, что хотите удалить категорию?',
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No
                 )
@@ -438,7 +438,7 @@ class CalendarSidebar(QWidget):
                     # Удаляем события этого календаря
                     self.db.conn.execute("DELETE FROM events WHERE category = ?", (cat.id,))
                     
-                    # Удаляем календарь
+                    # Удаляем категорию
                     self.db.conn.execute("DELETE FROM categories WHERE id = ?", (cat.id,))
                     self.db.conn.commit()
                     
@@ -454,8 +454,8 @@ class CalendarSidebar(QWidget):
                     # Показываем сообщение об успешном удалении
                     QMessageBox.information(
                         self, 
-                        "Календарь удален", 
-                        f'Календарь "{cat.name}" удален.\n{event_count} событий удалены безвозвратно.'
+                        "Категория удалена", 
+                        f'Категория "{cat.name}" удалена.\n{event_count} событий удалены безвозвратно.'
                     )
                 return
             
@@ -495,7 +495,7 @@ class CalendarSidebar(QWidget):
             cat_events = [e for e in events if e.category_id == cat.id]
             event_count = len(cat_events)
             
-            info_label = QLabel(f'Календарь "{cat.name}" содержит {event_count} событий.')
+            info_label = QLabel(f'Категория "{cat.name}" содержит {event_count} событий.')
             info_label.setWordWrap(True)
             info_label.setStyleSheet("color: #666; font-weight: normal; font-size: 12px;")
             transfer_layout.addWidget(info_label)
@@ -537,7 +537,7 @@ class CalendarSidebar(QWidget):
                 )
                 self.db.conn.commit()
                 
-                # Удаляем календарь
+                # Удаляем категорию
                 self.db.conn.execute("DELETE FROM categories WHERE id = ?", (cat.id,))
                 self.db.conn.commit()
                 
@@ -555,8 +555,8 @@ class CalendarSidebar(QWidget):
                 # Показываем сообщение об успешном удалении
                 QMessageBox.information(
                     self, 
-                    "Календарь удален", 
-                    f'Календарь "{cat.name}" удален.\n{event_count} событий перенесены в "{target_name}".'
+                    "Категория удалена", 
+                    f'Категория "{cat.name}" удалена.\n{event_count} событий перенесены в "{target_name}".'
                 )
             
             confirm_delete_btn.clicked.connect(do_delete)
@@ -580,7 +580,7 @@ class CalendarSidebar(QWidget):
                 self.refresh()
                 self.calendars_changed.emit()
             else:
-                QMessageBox.warning(self, "Ошибка", "Календарь с таким названием уже существует")
+                QMessageBox.warning(self, "Ошибка", "Категория с таким названием уже существует")
 
     # ── Анимация ────────────────────────────
 

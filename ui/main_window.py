@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
         self.activity_bar = ActivityBar()
         h_root.addWidget(self.activity_bar)
 
-        # Сайдбар с календарями (открыт по умолчанию)
+        # Сайдбар с категориями (открыт по умолчанию)
         self.sidebar = CalendarSidebar(self.db)
         h_root.addWidget(self.sidebar)
 

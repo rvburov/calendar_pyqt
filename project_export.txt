@@ -3197,7 +3197,7 @@ class CalendarSidebar(QWidget):
     def _delete_calendar(self, cat):
         if QMessageBox.question(
             self, "Подтверждение",
-            f'Удалить календарь "{cat.name}"?\nСобытия будут перенесены в "Личное"',
+            f'Удалить категорию "{cat.name}"?\nСобытия будут перенесены в "Личное"',
             QMessageBox.Yes | QMessageBox.No
         ) == QMessageBox.Yes:
             self._active_ids.discard(cat.id)

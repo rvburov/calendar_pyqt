@@ -69,7 +69,7 @@ def db_add_event(db, event: Event) -> Event:
     cat = db.category_manager.get_category_by_name(event.category)
     if cat is None:
         # Если категории нет, показываем ошибку
-        raise ValueError(f"Категория '{event.category}' не существует. Сначала создайте календарь.")
+        raise ValueError(f"Категория '{event.category}' не существует. Сначала создайте категорию.")
     
     cat_id = cat.id
     cur = db.conn.execute(
@@ -219,7 +219,7 @@ class EventDialog(QDialog):
         
         layout.addLayout(end_layout)
 
-        layout.addWidget(QLabel("Календарь"))
+        layout.addWidget(QLabel("Категория"))
         self.category_combo = QComboBox()
         self._load_categories()
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
@@ -253,8 +253,8 @@ class EventDialog(QDialog):
         
         # НЕ создаем запасные календари, если их нет
         if not cats:
-            # Показываем сообщение, что нужно создать календарь
-            self.category_combo.addItem("--- Нет календарей ---", None)
+            # Показываем сообщение, что нужно создать категорию
+            self.category_combo.addItem("--- Нет категорий ---", None)
             self.category_combo.setEnabled(False)
             return
         
@@ -297,9 +297,9 @@ class EventDialog(QDialog):
             QMessageBox.warning(self, "Ошибка", "Введите название события")
             return
         
-        # Проверяем, выбран ли календарь
+        # Проверяем, выбрана категория
         if self.category_combo.currentData() is None:
-            QMessageBox.warning(self, "Ошибка", "Нет доступных календарей.\nСначала создайте календарь в боковой панели.")
+            QMessageBox.warning(self, "Ошибка", "Нет доступных категорий.\nСначала создайте категорию в боковой панели.")
             return
         
         start_dt = datetime(
@@ -399,10 +399,11 @@ class NavBar(QWidget):
     prev_clicked  = pyqtSignal()
     next_clicked  = pyqtSignal()
     add_clicked   = pyqtSignal()
+    view_changed  = pyqtSignal(int)  # Сигнал для смены вида
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(100)
+        self.setFixedHeight(56)
         self.setStyleSheet(f"""
             QWidget {{
                 background: {Colors.BG};
@@ -410,16 +411,13 @@ class NavBar(QWidget):
             }}
         """)
         
-        # Главный вертикальный layout
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 8, 16, 8)
-        main_layout.setSpacing(8)
+        # Главный горизонтальный layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(8)
         
-        # ========== ВЕРХНЯЯ ЧАСТЬ ==========
-        top_layout = QHBoxLayout()
-        top_layout.setSpacing(8)
-        
-        # Кнопка "+" слева
+        # ========== ЛЕВАЯ ЧАСТЬ ==========
+        # Кнопка "+"
         self.add_btn = QPushButton("+")
         self.add_btn.setFixedSize(30, 30)
         self.add_btn.setCursor(Qt.PointingHandCursor)
@@ -431,20 +429,56 @@ class NavBar(QWidget):
             QPushButton:hover {{ background: #0063CC; }}
         """)
         self.add_btn.clicked.connect(self.add_clicked)
-        top_layout.addWidget(self.add_btn)
+        layout.addWidget(self.add_btn)
         
-        # Растяжка, чтобы кнопки видов были по центру
-        top_layout.addStretch()
+        # Кнопка "Сегодня"
+        self.today_btn = self._btn("Сегодня")
+        self.today_btn.clicked.connect(self.today_clicked)
+        layout.addWidget(self.today_btn)
         
-        # Кнопки переключения видов (будут добавлены извне)
-        self.segmented_container = QWidget()
-        self.segmented_layout = QHBoxLayout(self.segmented_container)
-        self.segmented_layout.setContentsMargins(0, 0, 0, 0)
-        self.segmented_layout.setSpacing(2)
-        top_layout.addWidget(self.segmented_container)
+        # Кнопка "<"
+        self.prev_btn = self._arrow_btn("<")
+        self.prev_btn.clicked.connect(self.prev_clicked)
+        layout.addWidget(self.prev_btn)
         
-        # Растяжка, чтобы иконка поиска была справа
-        top_layout.addStretch()
+        # Кнопка ">"
+        self.next_btn = self._arrow_btn(">")
+        self.next_btn.clicked.connect(self.next_clicked)
+        layout.addWidget(self.next_btn)
+        
+        # Заголовок
+        self.title_lbl = QLabel()
+        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_lbl.setStyleSheet(
+            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
+            f"font-weight: 600; border: none;"
+        )
+        layout.addWidget(self.title_lbl)
+        
+        # Растяжка, чтобы отодвинуть выпадающий список вправо
+        layout.addStretch()
+        
+        # Выпадающий список для выбора вида
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["Список", "День", "Неделя", "Месяц", "Год"])
+        self.view_combo.setCurrentIndex(3)  # По умолчанию "Месяц"
+        self.view_combo.setFixedSize(120, 30)
+        self.view_combo.setCursor(Qt.PointingHandCursor)
+        self.view_combo.currentIndexChanged.connect(self.view_changed)
+        self.view_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {Colors.SECONDARY_BG};
+                border: 1px solid {Colors.SEPARATOR};
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+                color: {Colors.PRIMARY_TEXT};
+            }}
+            QComboBox:focus {{
+                border-color: {Colors.ACCENT};
+            }}
+        """)
+        layout.addWidget(self.view_combo)
         
         # Иконка поиска
         self.search_btn = QPushButton("🔍")
@@ -462,42 +496,7 @@ class NavBar(QWidget):
                 background: {Colors.SEPARATOR};
             }}
         """)
-        top_layout.addWidget(self.search_btn)
-        
-        main_layout.addLayout(top_layout)
-        
-        # ========== НИЖНЯЯ ЧАСТЬ ==========
-        bottom_layout = QHBoxLayout()
-        bottom_layout.setSpacing(8)
-        
-        # Заголовок слева
-        self.title_lbl = QLabel()
-        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.title_lbl.setStyleSheet(
-            f"color: {Colors.PRIMARY_TEXT}; font-size: 13px;"
-            f"font-weight: 600; border: none;"
-        )
-        bottom_layout.addWidget(self.title_lbl)
-        
-        # Растяжка, чтобы отодвинуть кнопки навигации вправо
-        bottom_layout.addStretch()
-        
-        # Кнопка "<"
-        self.prev_btn = self._arrow_btn("<")
-        self.prev_btn.clicked.connect(self.prev_clicked)
-        bottom_layout.addWidget(self.prev_btn)
-        
-        # Кнопка "Сегодня"
-        self.today_btn = self._btn("Сегодня")
-        self.today_btn.clicked.connect(self.today_clicked)
-        bottom_layout.addWidget(self.today_btn)
-        
-        # Кнопка ">"
-        self.next_btn = self._arrow_btn(">")
-        self.next_btn.clicked.connect(self.next_clicked)
-        bottom_layout.addWidget(self.next_btn)
-        
-        main_layout.addLayout(bottom_layout)
+        layout.addWidget(self.search_btn)
 
     def _btn(self, text: str) -> QPushButton:
         btn = QPushButton(text)
@@ -528,14 +527,9 @@ class NavBar(QWidget):
     def set_title(self, text: str):
         self.title_lbl.setText(text)
     
-    def set_segmented_control(self, segmented: QWidget):
-        """Метод для установки segmented control из CalendarModule"""
-        # Очищаем предыдущий контент
-        for i in reversed(range(self.segmented_layout.count())):
-            widget = self.segmented_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
-        self.segmented_layout.addWidget(segmented)
+    def set_current_view(self, index: int):
+        """Установить текущий вид в выпадающем списке"""
+        self.view_combo.setCurrentIndex(index)
 
 
 # ─────────────────────────────────────────────
@@ -2199,14 +2193,8 @@ class CalendarModule(QWidget):
         self.navbar.prev_clicked.connect(self._go_prev)
         self.navbar.next_clicked.connect(self._go_next)
         self.navbar.add_clicked.connect(self._add_event)
+        self.navbar.view_changed.connect(self._switch_view)  # Подключаем сигнал
         root.addWidget(self.navbar)
-
-        # Создаем SegmentedControl для переключения видов
-        self.segmented = SegmentedControl(["Список", "День", "Неделя", "Месяц", "Год"])
-        self.segmented.tab_changed.connect(self._switch_view)
-        
-        # Передаем SegmentedControl в NavBar
-        self.navbar.set_segmented_control(self.segmented)
 
         # StackedWidget для видов
         self.stack = QStackedWidget()
@@ -2217,7 +2205,7 @@ class CalendarModule(QWidget):
         self.year_view  = YearView(self.db)
 
         for v in [self.list_view, self.day_view, self.week_view,
-                self.month_view, self.year_view]:
+                  self.month_view, self.year_view]:
             self.stack.addWidget(v)
             v.event_changed.connect(self._on_event_changed)
 
@@ -2225,37 +2213,54 @@ class CalendarModule(QWidget):
         self.year_view.month_selected.connect(self._on_month_selected)
         root.addWidget(self.stack, 1)
 
+        # По умолчанию показываем месяц (индекс 3)
         self.stack.setCurrentIndex(3)
         self._update_title()
 
-    def _current_view(self): return self.stack.currentWidget()
+    def _current_view(self): 
+        return self.stack.currentWidget()
 
     def _switch_view(self, idx):
-        self.stack.setCurrentIndex(idx); self._update_title()
+        """Переключение вида по индексу из выпадающего списка"""
+        self.stack.setCurrentIndex(idx)
+        self._update_title()
 
     def _update_title(self):
         v = self._current_view()
         if hasattr(v, 'header_text'):
             self.navbar.set_title(v.header_text())
 
-    def _go_today(self): self._current_view().go_today(); self._update_title()
-    def _go_prev(self):  self._current_view().go_prev();  self._update_title()
-    def _go_next(self):  self._current_view().go_next();  self._update_title()
+    def _go_today(self): 
+        self._current_view().go_today()
+        self._update_title()
+        
+    def _go_prev(self):  
+        self._current_view().go_prev()
+        self._update_title()
+        
+    def _go_next(self):  
+        self._current_view().go_next()
+        self._update_title()
 
     def _on_day_clicked(self, d):
-        self.day_view.current_date = d; self.day_view.refresh()
-        self.stack.setCurrentIndex(1); self.segmented.set_active(1)
+        self.day_view.current_date = d
+        self.day_view.refresh()
+        self.stack.setCurrentIndex(1)
+        self.navbar.set_current_view(1)  # Синхронизируем выпадающий список
         self._update_title()
 
     def _on_month_selected(self, d):
-        self.month_view.current_date = d; self.month_view.refresh()
-        self.stack.setCurrentIndex(3); self.segmented.set_active(3)
+        self.month_view.current_date = d
+        self.month_view.refresh()
+        self.stack.setCurrentIndex(3)
+        self.navbar.set_current_view(3)  # Синхронизируем выпадающий список
         self._update_title()
 
     def _add_event(self):
         v = self._current_view()
         preset = getattr(v, 'current_date', date.today())
-        if isinstance(preset, datetime): preset = preset.date()
+        if isinstance(preset, datetime): 
+            preset = preset.date()
         dlg = EventDialog(self, db=self.db, preset_date=preset)
         if dlg.exec_() == QDialog.Accepted:
             db_add_event(self.db, dlg.result_event)
@@ -2268,7 +2273,8 @@ class CalendarModule(QWidget):
         self._update_title()
 
     def _seed_if_empty(self):
-        if db_count_events(self.db) > 0: return
+        if db_count_events(self.db) > 0: 
+            return
         today = date.today()
         now = datetime.now().replace(second=0, microsecond=0)
         d1 = now + timedelta(days=1)
